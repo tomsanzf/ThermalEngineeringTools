@@ -1,0 +1,6 @@
+{
+  "name": "PFD Overlay Studio",
+  "description": "Overlay timeseries data onto Process Flow Diagrams and export as MP4 videos using WebCodecs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

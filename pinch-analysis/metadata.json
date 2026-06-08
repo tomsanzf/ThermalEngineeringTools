@@ -1,0 +1,6 @@
+{
+  "name": "Pinch Utility Targeter",
+  "description": "An interactive process integration tool. Set your approach temperature and stream values to calculate hot/cold utility targets, interval heat cascades, composite curves, and the grand composite curve.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

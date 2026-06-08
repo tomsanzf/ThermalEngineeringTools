@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+/* Custom CSS to handle SVG dash animation fallback */
+svg path {
+  stroke-dasharray: 8 6;
+}

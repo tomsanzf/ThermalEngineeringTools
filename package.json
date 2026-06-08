@@ -1,0 +1,20 @@
+{
+  "name": "thermal-engineering-portal",
+  "version": "1.0.0",
+  "description": "Thermal Engineering Portal and Interactive Tools Suite",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "install-all": "node install-all.js",
+    "build-all": "node build-all.js"
+  },
+  "keywords": [
+    "thermal",
+    "engineering",
+    "portal",
+    "calculator"
+  ],
+  "author": "",
+  "license": "ISC"
+}

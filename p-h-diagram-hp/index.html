@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Heat Pump Dashboard – R1234ze(E)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.27.0/plotly.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#c9d1d9;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+header{background:#161b22;border-bottom:1px solid #30363d;padding:8px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+header h1{font-size:14px;font-weight:600;color:#f0f6fc;letter-spacing:-.01em}
+.badge{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;letter-spacing:.03em}
+.badge-blue{background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb55}
+.badge-green{background:#1a7f3733;color:#3fb950;border:1px solid #1a7f3755}
+#main{display:flex;flex:1;overflow:hidden}
+#left{width:310px;min-width:310px;overflow-y:auto;padding:10px 8px;background:#0d1117;border-right:1px solid #30363d;display:flex;flex-direction:column;gap:8px}
+#left::-webkit-scrollbar{width:4px}
+#left::-webkit-scrollbar-track{background:#0d1117}
+#left::-webkit-scrollbar-thumb{background:#30363d;border-radius:2px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+.card-hdr{background:#21262d;padding:7px 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;display:flex;align-items:center;gap:7px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.c-red{background:#f85149}.c-blue{background:#58a6ff}.c-green{background:#3fb950}.c-orange{background:#f0883e}
+.card-body{padding:9px 12px;display:flex;flex-direction:column;gap:6px}
+.irow{display:flex;align-items:center;gap:6px}
+.irow label{flex:1;font-size:11px;color:#8b949e;white-space:nowrap}
+.irow .field{display:flex;align-items:center;gap:3px}
+.irow input{width:68px;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:3px 6px;font-size:11px;color:#f0f6fc;text-align:right;outline:none;transition:border .15s}
+.irow input:focus{border-color:#388bfd}
+.irow input:hover:not(:disabled){border-color:#58a6ff66}
+.irow input:disabled{background:#161b22;color:#8b949e;cursor:not-allowed;border-color:#30363d}
+.irow .u{font-size:10px;color:#6e7681;min-width:20px}
+.hr{height:1px;background:#21262d;margin:2px -12px}
+.rrow{display:flex;align-items:baseline;gap:6px}
+.rrow label{flex:1;font-size:11px;color:#6e7681;font-style:italic}
+.val{font-size:12px;font-weight:600;min-width:56px;text-align:right}
+.val.blue{color:#58a6ff}.val.red{color:#f85149}.val.green{color:#3fb950}
+.val.orange{color:#f0883e}.val.dim{color:#8b949e}
+.val.lg{font-size:13px}
+.warn{font-size:10px;color:#f85149;display:none;margin-top:2px}
+#right{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+#ph{flex:1;min-height:0}
+#sumbar{background:#161b22;border-top:1px solid #30363d;padding:7px 16px;display:flex;gap:20px;align-items:center;flex-shrink:0;flex-wrap:wrap}
+.si{display:flex;flex-direction:column;gap:1px}
+.si .sl{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.06em}
+.si .sv{font-size:14px;font-weight:700;color:#f0f6fc}
+.si .sv.blue{color:#58a6ff}.si .sv.red{color:#f85149}.si .sv.green{color:#3fb950}.si .sv.orange{color:#f0883e}
+.sep{width:1px;height:28px;background:#30363d;margin:0 4px}
+.tabs { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
+.tab-btn { background: transparent; border: none; color: #8b949e; padding: 10px 20px; font-size: 12px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.15s; outline: none; }
+.tab-btn.active { color: #f0f6fc; border-bottom: 2px solid #58a6ff; }
+.tab-btn:hover:not(.active) { color: #c9d1d9; }
+.tab-container { position: relative; flex: 1; min-height: 0; background: #0d1117;}
+.tab-pane { position: absolute; top: 0; left: 0; right: 0; bottom: 0; visibility: hidden; opacity: 0; transition: opacity 0.15s; overflow: auto; }
+.tab-pane.active { visibility: visible; opacity: 1; z-index: 10; }
+.hx-panel { display: flex; flex-direction: column; gap: 16px; padding: 16px; min-width: 0; }
+.hx-section { display: flex; gap: 12px; height: 320px; min-height: 320px; min-width: 0; }
+.hx-chart { flex: 1; min-width: 200px; min-height: 0; background: #161b22; border-radius: 8px; border: 1px solid #30363d; overflow: hidden; }
+.hx-table { flex: 1.5; min-width: 350px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; font-size: 11px; display: flex; flex-direction: column; overflow-x:auto; }
+.hx-table::-webkit-scrollbar{width:4px}
+.hx-table::-webkit-scrollbar-track{background:transparent}
+.hx-table::-webkit-scrollbar-thumb{background:#30363d;border-radius:2px}
+.hx-table-title { font-weight: 600; color: #f0f6fc; margin-bottom: 10px; font-size: 12px; border-bottom: 1px solid #30363d; padding-bottom: 6px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;}
+.hx-cross-table { display: flex; width: 100%; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.hx-cross-col { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #30363d; background: #0d1117;}
+.hx-cross-col:last-child { border-right: none; }
+.hx-cross-cell { padding: 6px 8px; border-bottom: 1px solid #21262d; color: #c9d1d9; font-size: 11px; text-align: center; height: 28px; display:flex; align-items:center; justify-content:center;}
+.hx-cross-cell:last-child { border-bottom: none; }
+.hx-cross-cell.hdr { font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; background: #161b22; height: 32px;}
+.hx-cross-col.label-col .hx-cross-cell { text-align: left; color: #8b949e; justify-content: flex-start; background: #161b22; font-weight: 500;}
+.hx-cross-col.total-col { background: #1f6feb11; border-left: 2px solid #58a6ff; }
+.hx-cross-col.total-col.cond { background: #f8514911; border-left-color: #f85149; }
+.hx-cross-col.total-col .hx-cross-cell { font-weight: 600; color: #58a6ff; }
+.hx-cross-col.total-col.cond .hx-cross-cell { color: #f85149; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Heat Pump Performance Dashboard</h1>
+  <span class="badge badge-blue">R1234ze(E)</span>
+  <span class="badge badge-green">CoolProp</span>
+  <span style="margin-left:auto;font-size:10px;color:#484f58">Live p-h diagram · Polynomial model</span>
+</header>
+<div id="main">
+<div id="left">
+
+  <div class="card">
+    <div class="card-hdr" style="justify-content: space-between">
+      <div style="display:flex;align-items:center;gap:7px"><span class="dot c-orange"></span>Cycle Constraints</div>
+    </div>
+    <div class="card-body">
+      <div class="irow" style="margin-bottom: 2px;">
+        <label>Derived Property</label>
+        <div class="field">
+          <select id="derive_mode" onchange="upd_mode()" style="width: 100px; background:#0d1117;border:1px solid #30363d;color:#f0f6fc;font-size:11px;padding:3px;border-radius:4px;outline:none;">
+            <option value="derive_sc">Subcooling</option>
+            <option value="derive_dsh" selected>Discharge SH</option>
+            <option value="derive_ssh">Suction SH</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><span class="dot c-red"></span>Condenser</div>
+    <div class="card-body">
+      <div class="irow"><label>Hot water in</label><div class="field"><input type="number" id="tcw_in" value="60" step="0.5" oninput="upd()"><span class="u">°C</span></div></div>
+      <div class="irow"><label>Hot water out</label><div class="field"><input type="number" id="tcw_out" value="70" step="0.5" oninput="upd()"><span class="u">°C</span></div></div>
+      <div class="irow"><label>Design approach</label><div class="field"><input type="number" id="app_c" value="2" step="0.5" oninput="upd()"><span class="u">K</span></div></div>
+      <div class="irow"><label>Discharge superheat</label><div class="field"><input type="number" id="dsh" value="20" step="1" oninput="upd()"><span class="u">K</span></div></div>
+      <div class="irow"><label>Subcooling</label><div class="field"><input type="number" id="sc" value="2" step="0.5" oninput="upd()"><span class="u">K</span></div></div>
+      <div class="hr"></div>
+      <div class="rrow"><label>T<sub>c,sat</sub></label><span class="val orange" id="o_tc">—</span><span class="ru">°C</span></div>
+      <div class="rrow"><label>Heating Power</label><span class="val red lg" id="o_qh">—</span><span class="ru">kW</span></div>
+      <div class="rrow"><label>Eff. LMTD</label><span class="val dim" id="o_lc">—</span><span class="ru">K</span></div>
+      <div class="rrow"><label>Eff. UA</label><span class="val dim" id="o_uac">—</span><span class="ru">kW/K</span></div>
+      <div class="warn" id="w_cond">⚠ Thermal crossover in condenser</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><span class="dot c-blue"></span>Evaporator</div>
+    <div class="card-body">
+      <div class="irow"><label>Cold water in</label><div class="field"><input type="number" id="tew_in" value="40" step="0.5" oninput="upd()"><span class="u">°C</span></div></div>
+      <div class="irow"><label>Cold water out</label><div class="field"><input type="number" id="tew_out" value="30" step="0.5" oninput="upd()"><span class="u">°C</span></div></div>
+      <div class="irow"><label>Design approach</label><div class="field"><input type="number" id="app_e" value="5" step="0.5" oninput="upd()"><span class="u">K</span></div></div>
+      <div class="irow"><label>Suction superheat</label><div class="field"><input type="number" id="ssh" value="5" step="1" oninput="upd()"><span class="u">K</span></div></div>
+      <div class="hr"></div>
+      <div class="rrow"><label>T<sub>e,sat</sub></label><span class="val blue" id="o_te">—</span><span class="ru">°C</span></div>
+      <div class="rrow"><label>Cooling Power</label><span class="val blue lg" id="o_qc">—</span><span class="ru">kW</span></div>
+      <div class="rrow"><label>Eff. LMTD</label><span class="val dim" id="o_le">—</span><span class="ru">K</span></div>
+      <div class="rrow"><label>Eff. UA</label><span class="val dim" id="o_uae">—</span><span class="ru">kW/K</span></div>
+      <div class="warn" id="w_evap">⚠ Thermal crossover in evaporator</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><span class="dot c-green"></span>Compressor</div>
+    <div class="card-body">
+      <div class="rrow"><label>COP Heating</label><span class="val red" id="o_coph">—</span><span class="ru"></span></div>
+      <div class="rrow"><label>Electrical Power</label><span class="val green lg" id="o_we">—</span><span class="ru">kW</span></div>
+      <div class="rrow"><label>Isentropic efficiency</label><span class="val dim" id="o_eta">—</span><span class="ru">%</span></div>
+      <div class="rrow"><label>Mass flow rate</label><span class="val dim" id="o_mdot">—</span><span class="ru">kg/s</span></div>
+      <div class="rrow"><label>Pressure ratio</label><span class="val orange" id="o_pr">—</span><span class="ru"></span></div>
+      <div class="rrow"><label>Discharge temp</label><span class="val dim" id="o_t2">—</span><span class="ru">°C</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div id="right">
+  <div class="tabs">
+    <button id="tab-btn-ph" class="tab-btn active" onclick="switchTab('ph')">P-h Diagram</button>
+    <button id="tab-btn-hx" class="tab-btn" onclick="switchTab('hx')">HX Profiles</button>
+  </div>
+  <div class="tab-container">
+    <div id="ph" class="tab-pane active"></div>
+    <div id="hx-view" class="tab-pane hx-panel">
+      <!-- Condenser Row -->
+      <div class="hx-section">
+        <div id="hx-cond-t" class="hx-chart"></div>
+        <div id="hx-cond-dt" class="hx-chart"></div>
+        <div class="hx-table">
+          <div class="hx-table-title"><span class="dot c-red"></span>Condenser LMTD / UA Details</div>
+          <div id="hx-cond-table-content" style="display:flex; flex-direction:column;"></div>
+        </div>
+      </div>
+      <!-- Evaporator Row -->
+      <div class="hx-section">
+        <div id="hx-evap-t" class="hx-chart"></div>
+        <div id="hx-evap-dt" class="hx-chart"></div>
+        <div class="hx-table">
+          <div class="hx-table-title"><span class="dot c-blue"></span>Evaporator LMTD / UA Details</div>
+          <div id="hx-evap-table-content" style="display:flex; flex-direction:column;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="sumbar">
+    <div class="si"><span class="sl">COP Cooling</span><span class="sv blue" id="s_copc">—</span></div>
+    <div class="sep"></div>
+    <div class="si"><span class="sl">COP Heating</span><span class="sv red" id="s_coph">—</span></div>
+    <div class="sep"></div>
+    <div class="si"><span class="sl">Q̇ cooling</span><span class="sv blue" id="s_qc">— kW</span></div>
+    <div class="si"><span class="sl">Q̇ heating</span><span class="sv red" id="s_qh">— kW</span></div>
+    <div class="si"><span class="sl">Ẇ electrical</span><span class="sv green" id="s_we">— kW</span></div>
+    <div class="sep"></div>
+    <div class="si"><span class="sl">Pressure ratio</span><span class="sv orange" id="s_pr">—</span></div>
+    <div class="si"><span class="sl">η isentropic</span><span class="sv green" id="s_eta">—</span></div>
+    <div class="sep"></div>
+    <div class="si"><span class="sl">T<sub>e,sat</sub></span><span class="sv" style="color:#58a6ff" id="s_te">—</span></div>
+    <div class="si"><span class="sl">T<sub>c,sat</sub></span><span class="sv" style="color:#f0883e" id="s_tc">—</span></div>
+  </div>
+</div>
+</div>
+
+<script>
+window.onerror = function(msg, url, line, col, error) {
+  if (msg === 'ResizeObserver loop completed with undelivered notifications.' || msg === 'ResizeObserver loop limit exceeded') {
+    return true;
+  }
+};
+</script>
+<script>
+// ── Embedded CoolProp data ────────────────────────────────────────────────
+const PH={"dome":[{"T":-55.0,"P":0.1542,"hf":130.012,"hg":345.257,"sf":0.71487,"sg":1.70156},{"T":-53.62,"P":0.168,"hf":131.717,"hg":346.235,"sf":0.72266,"sg":1.69983},{"T":-52.24,"P":0.1828,"hf":133.423,"hg":347.214,"sf":0.7304,"sg":1.69818},{"T":-50.86,"P":0.1987,"hf":135.132,"hg":348.194,"sf":0.7381,"sg":1.69661},{"T":-49.49,"P":0.2157,"hf":136.842,"hg":349.175,"sf":0.74577,"sg":1.6951},{"T":-48.11,"P":0.2338,"hf":138.554,"hg":350.156,"sf":0.7534,"sg":1.69367},{"T":-46.73,"P":0.2532,"hf":140.269,"hg":351.139,"sf":0.76099,"sg":1.6923},{"T":-45.35,"P":0.2739,"hf":141.985,"hg":352.123,"sf":0.76854,"sg":1.691},{"T":-43.97,"P":0.2959,"hf":143.704,"hg":353.107,"sf":0.77605,"sg":1.68976},{"T":-42.59,"P":0.3193,"hf":145.425,"hg":354.091,"sf":0.78353,"sg":1.68858},{"T":-41.21,"P":0.3443,"hf":147.148,"hg":355.077,"sf":0.79098,"sg":1.68746},{"T":-39.83,"P":0.3707,"hf":148.874,"hg":356.062,"sf":0.79839,"sg":1.6864},{"T":-38.46,"P":0.3988,"hf":150.602,"hg":357.047,"sf":0.80576,"sg":1.6854},{"T":-37.08,"P":0.4286,"hf":152.333,"hg":358.033,"sf":0.8131,"sg":1.68445},{"T":-35.7,"P":0.4602,"hf":154.066,"hg":359.018,"sf":0.82041,"sg":1.68355},{"T":-34.32,"P":0.4936,"hf":155.801,"hg":360.004,"sf":0.82769,"sg":1.6827},{"T":-32.94,"P":0.5289,"hf":157.539,"hg":360.989,"sf":0.83494,"sg":1.68191},{"T":-31.56,"P":0.5662,"hf":159.28,"hg":361.974,"sf":0.84215,"sg":1.68116},{"T":-30.18,"P":0.6055,"hf":161.024,"hg":362.958,"sf":0.84934,"sg":1.68046},{"T":-28.81,"P":0.6471,"hf":162.77,"hg":363.942,"sf":0.85649,"sg":1.6798},{"T":-27.43,"P":0.6908,"hf":164.519,"hg":364.925,"sf":0.86362,"sg":1.67919},{"T":-26.05,"P":0.7369,"hf":166.272,"hg":365.908,"sf":0.87071,"sg":1.67862},{"T":-24.67,"P":0.7854,"hf":168.027,"hg":366.889,"sf":0.87778,"sg":1.67809},{"T":-23.29,"P":0.8364,"hf":169.785,"hg":367.87,"sf":0.88482,"sg":1.6776},{"T":-21.91,"P":0.89,"hf":171.546,"hg":368.849,"sf":0.89183,"sg":1.67716},{"T":-20.53,"P":0.9462,"hf":173.311,"hg":369.827,"sf":0.89882,"sg":1.67674},{"T":-19.15,"P":1.0053,"hf":175.078,"hg":370.804,"sf":0.90578,"sg":1.67637},{"T":-17.78,"P":1.0671,"hf":176.849,"hg":371.78,"sf":0.91272,"sg":1.67603},{"T":-16.4,"P":1.132,"hf":178.624,"hg":372.754,"sf":0.91963,"sg":1.67572},{"T":-15.02,"P":1.1999,"hf":180.401,"hg":373.726,"sf":0.92651,"sg":1.67545},{"T":-13.64,"P":1.2709,"hf":182.182,"hg":374.697,"sf":0.93337,"sg":1.67521},{"T":-12.26,"P":1.3452,"hf":183.967,"hg":375.665,"sf":0.94021,"sg":1.675},{"T":-10.88,"P":1.4229,"hf":185.755,"hg":376.632,"sf":0.94702,"sg":1.67481},{"T":-9.5,"P":1.504,"hf":187.547,"hg":377.597,"sf":0.95381,"sg":1.67466},{"T":-8.12,"P":1.5886,"hf":189.343,"hg":378.56,"sf":0.96058,"sg":1.67454},{"T":-6.75,"P":1.6769,"hf":191.142,"hg":379.52,"sf":0.96732,"sg":1.67444},{"T":-5.37,"P":1.769,"hf":192.945,"hg":380.478,"sf":0.97405,"sg":1.67436},{"T":-3.99,"P":1.865,"hf":194.752,"hg":381.434,"sf":0.98075,"sg":1.67432},{"T":-2.61,"P":1.965,"hf":196.563,"hg":382.386,"sf":0.98743,"sg":1.67429},{"T":-1.23,"P":2.069,"hf":198.378,"hg":383.337,"sf":0.99409,"sg":1.67429},{"T":0.15,"P":2.1773,"hf":200.197,"hg":384.284,"sf":1.00073,"sg":1.67431},{"T":1.53,"P":2.2898,"hf":202.021,"hg":385.228,"sf":1.00735,"sg":1.67435},{"T":2.9,"P":2.4069,"hf":203.849,"hg":386.169,"sf":1.01396,"sg":1.67441},{"T":4.28,"P":2.5284,"hf":205.681,"hg":387.107,"sf":1.02054,"sg":1.67449},{"T":5.66,"P":2.6546,"hf":207.517,"hg":388.042,"sf":1.02711,"sg":1.67459},{"T":7.04,"P":2.7856,"hf":209.358,"hg":388.973,"sf":1.03366,"sg":1.6747},{"T":8.42,"P":2.9216,"hf":211.204,"hg":389.901,"sf":1.04019,"sg":1.67483},{"T":9.8,"P":3.0625,"hf":213.055,"hg":390.825,"sf":1.0467,"sg":1.67498},{"T":11.18,"P":3.2086,"hf":214.91,"hg":391.745,"sf":1.0532,"sg":1.67514},{"T":12.56,"P":3.3599,"hf":216.77,"hg":392.661,"sf":1.05968,"sg":1.67532},{"T":13.93,"P":3.5166,"hf":218.635,"hg":393.572,"sf":1.06615,"sg":1.67551},{"T":15.31,"P":3.6789,"hf":220.506,"hg":394.48,"sf":1.0726,"sg":1.67571},{"T":16.69,"P":3.8468,"hf":222.381,"hg":395.383,"sf":1.07904,"sg":1.67593},{"T":18.07,"P":4.0204,"hf":224.262,"hg":396.281,"sf":1.08547,"sg":1.67615},{"T":19.45,"P":4.2,"hf":226.149,"hg":397.175,"sf":1.09188,"sg":1.67638},{"T":20.83,"P":4.3855,"hf":228.041,"hg":398.064,"sf":1.09827,"sg":1.67663},{"T":22.21,"P":4.5773,"hf":229.939,"hg":398.947,"sf":1.10466,"sg":1.67688},{"T":23.58,"P":4.7753,"hf":231.842,"hg":399.826,"sf":1.11103,"sg":1.67714},{"T":24.96,"P":4.9797,"hf":233.752,"hg":400.699,"sf":1.11739,"sg":1.6774},{"T":26.34,"P":5.1907,"hf":235.667,"hg":401.566,"sf":1.12374,"sg":1.67768},{"T":27.72,"P":5.4084,"hf":237.589,"hg":402.427,"sf":1.13008,"sg":1.67795},{"T":29.1,"P":5.6329,"hf":239.518,"hg":403.283,"sf":1.13641,"sg":1.67823},{"T":30.48,"P":5.8643,"hf":241.452,"hg":404.132,"sf":1.14273,"sg":1.67852},{"T":31.86,"P":6.1029,"hf":243.394,"hg":404.974,"sf":1.14904,"sg":1.6788},{"T":33.24,"P":6.3487,"hf":245.342,"hg":405.81,"sf":1.15535,"sg":1.67909},{"T":34.61,"P":6.6019,"hf":247.297,"hg":406.639,"sf":1.16164,"sg":1.67938},{"T":35.99,"P":6.8626,"hf":249.26,"hg":407.461,"sf":1.16793,"sg":1.67967},{"T":37.37,"P":7.131,"hf":251.23,"hg":408.275,"sf":1.17421,"sg":1.67996},{"T":38.75,"P":7.4073,"hf":253.207,"hg":409.082,"sf":1.18048,"sg":1.68024},{"T":40.13,"P":7.6914,"hf":255.192,"hg":409.88,"sf":1.18675,"sg":1.68052},{"T":41.51,"P":7.9837,"hf":257.184,"hg":410.67,"sf":1.19301,"sg":1.6808},{"T":42.89,"P":8.2843,"hf":259.185,"hg":411.452,"sf":1.19927,"sg":1.68107},{"T":44.27,"P":8.5933,"hf":261.194,"hg":412.224,"sf":1.20553,"sg":1.68134},{"T":45.64,"P":8.9108,"hf":263.212,"hg":412.987,"sf":1.21178,"sg":1.6816},{"T":47.02,"P":9.2371,"hf":265.238,"hg":413.74,"sf":1.21803,"sg":1.68184},{"T":48.4,"P":9.5722,"hf":267.273,"hg":414.483,"sf":1.22427,"sg":1.68208},{"T":49.78,"P":9.9164,"hf":269.317,"hg":415.215,"sf":1.23052,"sg":1.68231},{"T":51.16,"P":10.2698,"hf":271.371,"hg":415.937,"sf":1.23676,"sg":1.68253},{"T":52.54,"P":10.6325,"hf":273.435,"hg":416.646,"sf":1.24301,"sg":1.68273},{"T":53.92,"P":11.0048,"hf":275.508,"hg":417.344,"sf":1.24925,"sg":1.68291},{"T":55.29,"P":11.3867,"hf":277.592,"hg":418.03,"sf":1.2555,"sg":1.68308},{"T":56.67,"P":11.7786,"hf":279.686,"hg":418.702,"sf":1.26175,"sg":1.68323},{"T":58.05,"P":12.1804,"hf":281.791,"hg":419.361,"sf":1.268,"sg":1.68337},{"T":59.43,"P":12.5925,"hf":283.908,"hg":420.006,"sf":1.27426,"sg":1.68348},{"T":60.81,"P":13.0149,"hf":286.036,"hg":420.635,"sf":1.28052,"sg":1.68356},{"T":62.19,"P":13.4479,"hf":288.177,"hg":421.25,"sf":1.28679,"sg":1.68363},{"T":63.57,"P":13.8916,"hf":290.33,"hg":421.848,"sf":1.29307,"sg":1.68366},{"T":64.95,"P":14.3462,"hf":292.496,"hg":422.429,"sf":1.29936,"sg":1.68367},{"T":66.32,"P":14.812,"hf":294.676,"hg":422.993,"sf":1.30565,"sg":1.68364},{"T":67.7,"P":15.2891,"hf":296.87,"hg":423.538,"sf":1.31196,"sg":1.68359},{"T":69.08,"P":15.7776,"hf":299.078,"hg":424.063,"sf":1.31829,"sg":1.68349},{"T":70.46,"P":16.2779,"hf":301.303,"hg":424.567,"sf":1.32463,"sg":1.68336},{"T":71.84,"P":16.79,"hf":303.543,"hg":425.05,"sf":1.33098,"sg":1.68319},{"T":73.22,"P":17.3143,"hf":305.801,"hg":425.51,"sf":1.33736,"sg":1.68297},{"T":74.6,"P":17.8509,"hf":308.076,"hg":425.945,"sf":1.34375,"sg":1.68271},{"T":75.97,"P":18.4,"hf":310.371,"hg":426.355,"sf":1.35017,"sg":1.68239},{"T":77.35,"P":18.9619,"hf":312.685,"hg":426.736,"sf":1.35662,"sg":1.68201},{"T":78.73,"P":19.5368,"hf":315.021,"hg":427.089,"sf":1.3631,"sg":1.68158},{"T":80.11,"P":20.1249,"hf":317.379,"hg":427.41,"sf":1.36961,"sg":1.68108},{"T":81.49,"P":20.7266,"hf":319.761,"hg":427.697,"sf":1.37616,"sg":1.68051},{"T":82.87,"P":21.3419,"hf":322.17,"hg":427.947,"sf":1.38275,"sg":1.67986},{"T":84.25,"P":21.9713,"hf":324.605,"hg":428.158,"sf":1.38938,"sg":1.67912},{"T":85.63,"P":22.615,"hf":327.071,"hg":428.326,"sf":1.39607,"sg":1.67829},{"T":87.0,"P":23.2732,"hf":329.57,"hg":428.447,"sf":1.40281,"sg":1.67736},{"T":88.38,"P":23.9463,"hf":332.103,"hg":428.517,"sf":1.40962,"sg":1.6763},{"T":89.76,"P":24.6347,"hf":334.676,"hg":428.53,"sf":1.41651,"sg":1.67512},{"T":91.14,"P":25.3385,"hf":337.292,"hg":428.481,"sf":1.42348,"sg":1.6738},{"T":92.52,"P":26.0583,"hf":339.956,"hg":428.36,"sf":1.43055,"sg":1.67231},{"T":93.9,"P":26.7944,"hf":342.674,"hg":428.161,"sf":1.43773,"sg":1.67063},{"T":95.28,"P":27.5472,"hf":345.454,"hg":427.87,"sf":1.44504,"sg":1.66874},{"T":96.65,"P":28.3172,"hf":348.304,"hg":427.474,"sf":1.45251,"sg":1.66659},{"T":98.03,"P":29.1048,"hf":351.237,"hg":426.956,"sf":1.46016,"sg":1.66415},{"T":99.41,"P":29.9106,"hf":354.269,"hg":426.291,"sf":1.46804,"sg":1.66135},{"T":100.79,"P":30.7353,"hf":357.422,"hg":425.447,"sf":1.4762,"sg":1.65812},{"T":102.17,"P":31.5795,"hf":360.728,"hg":424.377,"sf":1.48473,"sg":1.65432},{"T":103.55,"P":32.4441,"hf":364.234,"hg":423.01,"sf":1.49374,"sg":1.64977},{"T":104.93,"P":33.3301,"hf":368.024,"hg":421.229,"sf":1.50346,"sg":1.64418},{"T":106.31,"P":34.2389,"hf":372.256,"hg":418.805,"sf":1.51429,"sg":1.63696},{"T":107.68,"P":35.1724,"hf":377.328,"hg":415.18,"sf":1.52726,"sg":1.62665},{"T":109.06,"P":36.1344,"hf":385.414,"hg":407.436,"sf":1.54804,"sg":1.60566}],"isen":[{"s":1.66,"pts":[{"P":32.6755,"h":426.96},{"P":35.3617,"h":427.975}]},{"s":1.68,"pts":[{"P":1.5,"h":378.961},{"P":1.6233,"h":380.409},{"P":1.7568,"h":381.864},{"P":1.9012,"h":383.324},{"P":2.0575,"h":384.791},{"P":2.2266,"h":386.263},{"P":2.4097,"h":387.739},{"P":2.6078,"h":389.221},{"P":2.8221,"h":390.707},{"P":3.0542,"h":392.197},{"P":3.3052,"h":393.69},{"P":3.5769,"h":395.187},{"P":3.871,"h":396.686},{"P":4.1892,"h":398.186},{"P":4.5336,"h":399.688},{"P":4.9063,"h":401.191},{"P":5.3097,"h":402.694},{"P":5.7462,"h":404.195},{"P":6.2186,"h":405.695},{"P":23.822,"h":429.772},{"P":25.7804,"h":431.012},{"P":27.8997,"h":432.222},{"P":30.1933,"h":433.4},{"P":32.6755,"h":434.546},{"P":35.3617,"h":435.661}]},{"s":1.7,"pts":[{"P":1.5,"h":384.327},{"P":1.6233,"h":385.817},{"P":1.7568,"h":387.313},{"P":1.9012,"h":388.815},{"P":2.0575,"h":390.324},{"P":2.2266,"h":391.838},{"P":2.4097,"h":393.358},{"P":2.6078,"h":394.883},{"P":2.8221,"h":396.413},{"P":3.0542,"h":397.948},{"P":3.3052,"h":399.486},{"P":3.5769,"h":401.028},{"P":3.871,"h":402.573},{"P":4.1892,"h":404.121},{"P":4.5336,"h":405.671},{"P":4.9063,"h":407.222},{"P":5.3097,"h":408.773},{"P":5.7462,"h":410.325},{"P":6.2186,"h":411.876},{"P":6.7298,"h":413.425},{"P":7.283,"h":414.972},{"P":7.8818,"h":416.516},{"P":8.5297,"h":418.055},{"P":9.2309,"h":419.588},{"P":9.9898,"h":421.115},{"P":10.811,"h":422.634},{"P":11.6998,"h":424.144},{"P":12.6616,"h":425.643},{"P":13.7025,"h":427.13},{"P":14.829,"h":428.603},{"P":16.0481,"h":430.06},{"P":17.3674,"h":431.501},{"P":18.7951,"h":432.922},{"P":20.3402,"h":434.323},{"P":22.0124,"h":435.7},{"P":23.822,"h":437.054},{"P":25.7804,"h":438.38},{"P":27.8997,"h":439.68},{"P":30.1933,"h":440.95},{"P":32.6755,"h":442.191},{"P":35.3617,"h":443.402}]},{"s":1.72,"pts":[{"P":1.5,"h":389.82},{"P":1.6233,"h":391.35},{"P":1.7568,"h":392.888},{"P":1.9012,"h":394.432},{"P":2.0575,"h":395.983},{"P":2.2266,"h":397.54},{"P":2.4097,"h":399.103},{"P":2.6078,"h":400.672},{"P":2.8221,"h":402.246},{"P":3.0542,"h":403.825},{"P":3.3052,"h":405.408},{"P":3.5769,"h":406.996},{"P":3.871,"h":408.587},{"P":4.1892,"h":410.182},{"P":4.5336,"h":411.779},{"P":4.9063,"h":413.378},{"P":5.3097,"h":414.978},{"P":5.7462,"h":416.579},{"P":6.2186,"h":418.181},{"P":6.7298,"h":419.781},{"P":7.283,"h":421.381},{"P":7.8818,"h":422.977},{"P":8.5297,"h":424.571},{"P":9.2309,"h":426.16},{"P":9.9898,"h":427.744},{"P":10.811,"h":429.321},{"P":11.6998,"h":430.89},{"P":12.6616,"h":432.45},{"P":13.7025,"h":434.0},{"P":14.829,"h":435.538},{"P":16.0481,"h":437.063},{"P":17.3674,"h":438.572},{"P":18.7951,"h":440.065},{"P":20.3402,"h":441.54},{"P":22.0124,"h":442.994},{"P":23.822,"h":444.427},{"P":25.7804,"h":445.836},{"P":27.8997,"h":447.22},{"P":30.1933,"h":448.578},{"P":32.6755,"h":449.909},{"P":35.3617,"h":451.213}]},{"s":1.74,"pts":[{"P":1.5,"h":395.44},{"P":1.6233,"h":397.012},{"P":1.7568,"h":398.591},{"P":1.9012,"h":400.177},{"P":2.0575,"h":401.771},{"P":2.2266,"h":403.37},{"P":2.4097,"h":404.977},{"P":2.6078,"h":406.589},{"P":2.8221,"h":408.207},{"P":3.0542,"h":409.83},{"P":3.3052,"h":411.459},{"P":3.5769,"h":413.092},{"P":3.871,"h":414.729},{"P":4.1892,"h":416.37},{"P":4.5336,"h":418.014},{"P":4.9063,"h":419.661},{"P":5.3097,"h":421.31},{"P":5.7462,"h":422.961},{"P":6.2186,"h":424.612},{"P":6.7298,"h":426.264},{"P":7.283,"h":427.915},{"P":7.8818,"h":429.564},{"P":8.5297,"h":431.211},{"P":9.2309,"h":432.855},{"P":9.9898,"h":434.495},{"P":10.811,"h":436.129},{"P":11.6998,"h":437.757},{"P":12.6616,"h":439.377},{"P":13.7025,"h":440.989},{"P":14.829,"h":442.59},{"P":16.0481,"h":444.179},{"P":17.3674,"h":445.756},{"P":18.7951,"h":447.318},{"P":20.3402,"h":448.863},{"P":22.0124,"h":450.391},{"P":23.822,"h":451.9},{"P":25.7804,"h":453.388},{"P":27.8997,"h":454.853},{"P":30.1933,"h":456.295},{"P":32.6755,"h":457.712},{"P":35.3617,"h":459.104}]},{"s":1.76,"pts":[{"P":1.5,"h":401.189},{"P":1.6233,"h":402.802},{"P":1.7568,"h":404.423},{"P":1.9012,"h":406.052},{"P":2.0575,"h":407.688},{"P":2.2266,"h":409.331},{"P":2.4097,"h":410.98},{"P":2.6078,"h":412.636},{"P":2.8221,"h":414.298},{"P":3.0542,"h":415.966},{"P":3.3052,"h":417.64},{"P":3.5769,"h":419.318},{"P":3.871,"h":421.001},{"P":4.1892,"h":422.689},{"P":4.5336,"h":424.38},{"P":4.9063,"h":426.075},{"P":5.3097,"h":427.772},{"P":5.7462,"h":429.472},{"P":6.2186,"h":431.173},{"P":6.7298,"h":432.875},{"P":7.283,"h":434.577},{"P":7.8818,"h":436.279},{"P":8.5297,"h":437.979},{"P":9.2309,"h":439.677},{"P":9.9898,"h":441.372},{"P":10.811,"h":443.062},{"P":11.6998,"h":444.748},{"P":12.6616,"h":446.427},{"P":13.7025,"h":448.099},{"P":14.829,"h":449.762},{"P":16.0481,"h":451.415},{"P":17.3674,"h":453.056},{"P":18.7951,"h":454.685},{"P":20.3402,"h":456.3},{"P":22.0124,"h":457.899},{"P":23.822,"h":459.481},{"P":25.7804,"h":461.045},{"P":27.8997,"h":462.588},{"P":30.1933,"h":464.11},{"P":32.6755,"h":465.61},{"P":35.3617,"h":467.088}]},{"s":1.78,"pts":[{"P":1.5,"h":407.069},{"P":1.6233,"h":408.724},{"P":1.7568,"h":410.387},{"P":1.9012,"h":412.058},{"P":2.0575,"h":413.737},{"P":2.2266,"h":415.423},{"P":2.4097,"h":417.116},{"P":2.6078,"h":418.816},{"P":2.8221,"h":420.522},{"P":3.0542,"h":422.235},{"P":3.3052,"h":423.953},{"P":3.5769,"h":425.677},{"P":3.871,"h":427.406},{"P":4.1892,"h":429.14},{"P":4.5336,"h":430.878},{"P":4.9063,"h":432.621},{"P":5.3097,"h":434.366},{"P":5.7462,"h":436.115},{"P":6.2186,"h":437.865},{"P":6.7298,"h":439.617},{"P":7.283,"h":441.37},{"P":7.8818,"h":443.124},{"P":8.5297,"h":444.877},{"P":9.2309,"h":446.628},{"P":9.9898,"h":448.378},{"P":10.811,"h":450.124},{"P":11.6998,"h":451.866},{"P":12.6616,"h":453.603},{"P":13.7025,"h":455.334},{"P":14.829,"h":457.058},{"P":16.0481,"h":458.773},{"P":17.3674,"h":460.479},{"P":18.7951,"h":462.173},{"P":20.3402,"h":463.855},{"P":22.0124,"h":465.523},{"P":23.822,"h":467.176},{"P":25.7804,"h":468.813},{"P":27.8997,"h":470.432},{"P":30.1933,"h":472.032},{"P":32.6755,"h":473.612},{"P":35.3617,"h":475.171}]},{"s":1.8,"pts":[{"P":1.5,"h":413.082},{"P":1.6233,"h":414.779},{"P":1.7568,"h":416.485},{"P":1.9012,"h":418.198},{"P":2.0575,"h":419.92},{"P":2.2266,"h":421.649},{"P":2.4097,"h":423.385},{"P":2.6078,"h":425.129},{"P":2.8221,"h":426.88},{"P":3.0542,"h":428.637},{"P":3.3052,"h":430.401},{"P":3.5769,"h":432.17},{"P":3.871,"h":433.945},{"P":4.1892,"h":435.726},{"P":4.5336,"h":437.511},{"P":4.9063,"h":439.301},{"P":5.3097,"h":441.094},{"P":5.7462,"h":442.892},{"P":6.2186,"h":444.691},{"P":6.7298,"h":446.494},{"P":7.283,"h":448.297},{"P":7.8818,"h":450.102},{"P":8.5297,"h":451.907},{"P":9.2309,"h":453.712},{"P":9.9898,"h":455.516},{"P":10.811,"h":457.317},{"P":11.6998,"h":459.115},{"P":12.6616,"h":460.91},{"P":13.7025,"h":462.699},{"P":14.829,"h":464.482},{"P":16.0481,"h":466.258},{"P":17.3674,"h":468.026},{"P":18.7951,"h":469.785},{"P":20.3402,"h":471.532},{"P":22.0124,"h":473.268},{"P":23.822,"h":474.991},{"P":25.7804,"h":476.698},{"P":27.8997,"h":478.391},{"P":30.1933,"h":480.066},{"P":32.6755,"h":481.723},{"P":35.3617,"h":483.362}]},{"s":1.82,"pts":[{"P":1.5,"h":419.229},{"P":1.6233,"h":420.969},{"P":1.7568,"h":422.717},{"P":1.9012,"h":424.473},{"P":2.0575,"h":426.238},{"P":2.2266,"h":428.01},{"P":2.4097,"h":429.791},{"P":2.6078,"h":431.578},{"P":2.8221,"h":433.374},{"P":3.0542,"h":435.176},{"P":3.3052,"h":436.985},{"P":3.5769,"h":438.8},{"P":3.871,"h":440.621},{"P":4.1892,"h":442.448},{"P":4.5336,"h":444.28},{"P":4.9063,"h":446.118},{"P":5.3097,"h":447.959},{"P":5.7462,"h":449.805},{"P":6.2186,"h":451.654},{"P":6.7298,"h":453.506},{"P":7.283,"h":455.36},{"P":7.8818,"h":457.216},{"P":8.5297,"h":459.073},{"P":9.2309,"h":460.931},{"P":9.9898,"h":462.788},{"P":10.811,"h":464.644},{"P":11.6998,"h":466.498},{"P":12.6616,"h":468.349},{"P":13.7025,"h":470.196},{"P":14.829,"h":472.038},{"P":16.0481,"h":473.874},{"P":17.3674,"h":475.704},{"P":18.7951,"h":477.525},{"P":20.3402,"h":479.337},{"P":22.0124,"h":481.139},{"P":23.822,"h":482.929},{"P":25.7804,"h":484.706},{"P":27.8997,"h":486.47},{"P":30.1933,"h":488.218},{"P":32.6755,"h":489.951},{"P":35.3617,"h":491.666}]},{"s":1.84,"pts":[{"P":1.5,"h":425.512},{"P":1.6233,"h":427.295},{"P":1.7568,"h":429.085},{"P":1.9012,"h":430.885},{"P":2.0575,"h":432.693},{"P":2.2266,"h":434.509},{"P":2.4097,"h":436.333},{"P":2.6078,"h":438.166},{"P":2.8221,"h":440.005},{"P":3.0542,"h":441.852},{"P":3.3052,"h":443.707},{"P":3.5769,"h":445.568},{"P":3.871,"h":447.435},{"P":4.1892,"h":449.309},{"P":4.5336,"h":451.188},{"P":4.9063,"h":453.073},{"P":5.3097,"h":454.962},{"P":5.7462,"h":456.857},{"P":6.2186,"h":458.755},{"P":6.7298,"h":460.657},{"P":7.283,"h":462.561},{"P":7.8818,"h":464.468},{"P":8.5297,"h":466.377},{"P":9.2309,"h":468.287},{"P":9.9898,"h":470.198},{"P":10.811,"h":472.108},{"P":11.6998,"h":474.017},{"P":12.6616,"h":475.923},{"P":13.7025,"h":477.828},{"P":14.829,"h":479.728},{"P":16.0481,"h":481.624},{"P":17.3674,"h":483.514},{"P":18.7951,"h":485.397},{"P":20.3402,"h":487.272},{"P":22.0124,"h":489.139},{"P":23.822,"h":490.995},{"P":25.7804,"h":492.841},{"P":27.8997,"h":494.674},{"P":30.1933,"h":496.494},{"P":32.6755,"h":498.3},{"P":35.3617,"h":500.09}]},{"s":1.86,"pts":[{"P":1.5,"h":431.934},{"P":1.6233,"h":433.758},{"P":1.7568,"h":435.592},{"P":1.9012,"h":437.435},{"P":2.0575,"h":439.287},{"P":2.2266,"h":441.147},{"P":2.4097,"h":443.015},{"P":2.6078,"h":444.892},{"P":2.8221,"h":446.777},{"P":3.0542,"h":448.669},{"P":3.3052,"h":450.569},{"P":3.5769,"h":452.476},{"P":3.871,"h":454.389},{"P":4.1892,"h":456.31},{"P":4.5336,"h":458.236},{"P":4.9063,"h":460.168},{"P":5.3097,"h":462.106},{"P":5.7462,"h":464.049},{"P":6.2186,"h":465.996},{"P":6.7298,"h":467.948},{"P":7.283,"h":469.903},{"P":7.8818,"h":471.861},{"P":8.5297,"h":473.821},{"P":9.2309,"h":475.783},{"P":9.9898,"h":477.747},{"P":10.811,"h":479.711},{"P":11.6998,"h":481.674},{"P":12.6616,"h":483.637},{"P":13.7025,"h":485.597},{"P":14.829,"h":487.555},{"P":16.0481,"h":489.51},{"P":17.3674,"h":491.46},{"P":18.7951,"h":493.404},{"P":20.3402,"h":495.342},{"P":22.0124,"h":497.272},{"P":23.822,"h":499.194},{"P":25.7804,"h":501.106},{"P":27.8997,"h":503.007},{"P":30.1933,"h":504.897},{"P":32.6755,"h":506.775},{"P":35.3617,"h":508.639}]}],"cp_vap":[{"T":-40.0,"cp":0.7791},{"T":-35.0,"cp":0.7907},{"T":-30.0,"cp":0.8027},{"T":-25.0,"cp":0.8151},{"T":-20.0,"cp":0.8278},{"T":-15.0,"cp":0.8411},{"T":-10.0,"cp":0.8549},{"T":-5.0,"cp":0.8694},{"T":0.0,"cp":0.8846},{"T":5.0,"cp":0.9006},{"T":10.0,"cp":0.9176},{"T":15.0,"cp":0.9356},{"T":20.0,"cp":0.9549},{"T":25.0,"cp":0.9756},{"T":30.0,"cp":0.998},{"T":35.0,"cp":1.0224},{"T":40.0,"cp":1.0492},{"T":45.0,"cp":1.079},{"T":50.0,"cp":1.1128},{"T":55.0,"cp":1.1517},{"T":60.0,"cp":1.1975},{"T":65.0,"cp":1.2526},{"T":70.0,"cp":1.3199}],"cp_liq":[{"T":-40.0,"cp":1.2503},{"T":-35.0,"cp":1.2566},{"T":-30.0,"cp":1.2634},{"T":-25.0,"cp":1.2708},{"T":-20.0,"cp":1.2787},{"T":-15.0,"cp":1.2871},{"T":-10.0,"cp":1.2962},{"T":-5.0,"cp":1.3059},{"T":0.0,"cp":1.3163},{"T":5.0,"cp":1.3274},{"T":10.0,"cp":1.3395},{"T":15.0,"cp":1.3525},{"T":20.0,"cp":1.3667},{"T":25.0,"cp":1.3822},{"T":30.0,"cp":1.3991},{"T":35.0,"cp":1.4178},{"T":40.0,"cp":1.4384},{"T":45.0,"cp":1.4614},{"T":50.0,"cp":1.4871},{"T":55.0,"cp":1.5162},{"T":60.0,"cp":1.5498},{"T":65.0,"cp":1.5891},{"T":70.0,"cp":1.6362}],"sg_sh":[{"T":-40.0,"sg":1.68653,"hg":355.944,"cp_v":0.7791},{"T":-35.0,"sg":1.68311,"hg":359.518,"cp_v":0.7907},{"T":-30.0,"sg":1.68037,"hg":363.089,"cp_v":0.8027},{"T":-25.0,"sg":1.67822,"hg":366.654,"cp_v":0.8151},{"T":-20.0,"sg":1.67659,"hg":370.205,"cp_v":0.8278},{"T":-15.0,"sg":1.67545,"hg":373.739,"cp_v":0.8411},{"T":-10.0,"sg":1.67471,"hg":377.25,"cp_v":0.8549},{"T":-5.0,"sg":1.67435,"hg":380.733,"cp_v":0.8694},{"T":0.0,"sg":1.67431,"hg":384.183,"cp_v":0.8846},{"T":5.0,"sg":1.67454,"hg":387.594,"cp_v":0.9006},{"T":10.0,"sg":1.675,"hg":390.96,"cp_v":0.9176},{"T":15.0,"sg":1.67567,"hg":394.274,"cp_v":0.9356},{"T":20.0,"sg":1.67648,"hg":397.531,"cp_v":0.9549},{"T":25.0,"sg":1.67741,"hg":400.722,"cp_v":0.9756},{"T":30.0,"sg":1.67842,"hg":403.838,"cp_v":0.998},{"T":35.0,"sg":1.67946,"hg":406.87,"cp_v":1.0224},{"T":40.0,"sg":1.6805,"hg":409.806,"cp_v":1.0492},{"T":45.0,"sg":1.68148,"hg":412.632,"cp_v":1.079},{"T":50.0,"sg":1.68235,"hg":415.331,"cp_v":1.1128},{"T":55.0,"sg":1.68305,"hg":417.884,"cp_v":1.1517},{"T":60.0,"sg":1.68352,"hg":420.268,"cp_v":1.1975},{"T":65.0,"sg":1.68367,"hg":422.452,"cp_v":1.2526},{"T":70.0,"sg":1.68341,"hg":424.402,"cp_v":1.3199}],"T_crit":109.36,"P_crit":36.3487};
+
+// ── Interpolation helpers ─────────────────────────────────────────────────
+function lerpArr(arr,kx,x){
+  if(x<=arr[0][kx])return arr[0];
+  const n=arr.length;
+  if(x>=arr[n-1][kx])return arr[n-1];
+  let lo=0,hi=n-1;
+  while(hi-lo>1){const m=(lo+hi)>>1;arr[m][kx]<=x?lo=m:hi=m;}
+  const t=(x-arr[lo][kx])/(arr[hi][kx]-arr[lo][kx]);
+  const r={};
+  for(const k of Object.keys(arr[lo]))r[k]=arr[lo][k]+t*(arr[hi][k]-arr[lo][k]);
+  return r;
+}
+const domeByT=T=>lerpArr(PH.dome,'T',T);
+const cpV=T=>lerpArr(PH.cp_vap,'T',T).cp;
+const cpL=T=>lerpArr(PH.cp_liq,'T',T).cp;
+
+// T_sat from P via dome (P ascending)
+function tSatFromP(Pbar){
+  const d=PH.dome;
+  if(Pbar<=d[0].P)return d[0].T;
+  if(Pbar>=d[d.length-1].P)return d[d.length-1].T;
+  for(let i=0;i<d.length-1;i++){
+    if(d[i].P<=Pbar&&Pbar<=d[i+1].P){
+      const t=(Pbar-d[i].P)/(d[i+1].P-d[i].P);
+      return d[i].T+t*(d[i+1].T-d[i].T);
+    }
+  }
+  return d[d.length-1].T;
+}
+
+// Isentropic enthalpy at given pressure from isen lines
+function isenHonLine(pts,P){
+  if(!pts||!pts.length)return null;
+  if(P<=pts[0].P)return pts[0].h;
+  if(P>=pts[pts.length-1].P)return pts[pts.length-1].h;
+  for(let i=0;i<pts.length-1;i++){
+    if(pts[i].P<=P&&P<=pts[i+1].P){
+      const t=(P-pts[i].P)/(pts[i+1].P-pts[i].P);
+      return pts[i].h+t*(pts[i+1].h-pts[i].h);
+    }
+  }
+  return pts[pts.length-1].h;
+}
+function isenH(s,P){
+  const ls=PH.isen;
+  let lo=0;
+  for(let i=0;i<ls.length-1;i++){if(ls[i].s<=s)lo=i;}
+  const hi=Math.min(lo+1,ls.length-1);
+  const hl=isenHonLine(ls[lo].pts,P);
+  const hh=isenHonLine(ls[hi].pts,P);
+  if(hl===null||hh===null)return null;
+  const t=ls[lo].s===ls[hi].s?0:(s-ls[lo].s)/(ls[hi].s-ls[lo].s);
+  return hl+t*(hh-hl);
+}
+
+function lmtd(dT1,dT2){
+  if(dT1<=0||dT2<=0)return NaN;
+  if(Math.abs(dT1-dT2)<1e-4)return dT1;
+  return(dT1-dT2)/Math.log(dT1/dT2);
+}
+
+// ── Polynomial coefficients (W) ───────────────────────────────────────────
+const C_COOL=[441161.9166,14549.23166,4193.907656,197.935225,119.779816,-126.4332162,1.201605718,-0.13709801,-1.999113625,0.536011907];
+const C_ELEC=[74425.38251,295.8551475,-479.0646562,-19.91696014,-9.002051317,38.2568553,-0.462871054,0.207017623,0.332945621,-0.114188638];
+function poly(to,tc,c){return c[0]+c[1]*to+c[2]*tc+c[3]*to**2+c[4]*to*tc+c[5]*tc**2+c[6]*to**3+c[7]*tc*to**2+c[8]*to*tc**2+c[9]*tc**3;}
+
+// ── Main calculation ──────────────────────────────────────────────────────
+function g(id){return parseFloat(document.getElementById(id).value)||0;}
+
+function calculate(){
+  const mode = document.getElementById('derive_mode').value;
+  const Tcw_i=g('tcw_in'),Tcw_o=g('tcw_out'),ac=g('app_c');
+  const Tew_i=g('tew_in'),Tew_o=g('tew_out'),ae=g('app_e');
+  let dsh=0, sc_=0, ssh=0;
+
+  // Saturation temperatures from approach + water temps
+  const Tc=Tcw_o+ac;
+  const Te=Tew_o-ae;
+
+  // Powers from polynomial
+  const Qc_W=poly(Te,Tc,C_COOL), We_W=poly(Te,Tc,C_ELEC), Qh_W=Qc_W+We_W;
+  const Qc=Qc_W/1e3, We=We_W/1e3, Qh=Qh_W/1e3;
+
+  // Dome states
+  const de=domeByT(Te), dc=domeByT(Tc);
+
+  let h1, h2, h3, h4, m_dot;
+
+  if (mode === 'derive_sc') {
+    ssh = g('ssh');
+    dsh = g('dsh');
+    h1 = de.hg + cpV(Te)*ssh;
+    h2 = dc.hg + cpV(Tc)*dsh;
+    m_dot = We_W / ((h2 - h1)*1e3);
+    h3 = h2 - Qh_W / (m_dot*1e3);
+    h4 = h3;
+    sc_ = (dc.hf - h3) / cpL(Tc);
+    // visually update disabled field
+    if(document.activeElement.id !== 'sc') document.getElementById('sc').value = sc_.toFixed(2);
+  } else if (mode === 'derive_dsh') {
+    ssh = g('ssh');
+    sc_ = g('sc');
+    h1 = de.hg + cpV(Te)*ssh;
+    h3 = dc.hf - cpL(Tc)*sc_;
+    h4 = h3;
+    m_dot = Qc_W / ((h1 - h4)*1e3);
+    h2 = h1 + We_W / (m_dot*1e3);
+    dsh = (h2 - dc.hg) / cpV(Tc);
+    if(document.activeElement.id !== 'dsh') document.getElementById('dsh').value = dsh.toFixed(2);
+  } else {
+    dsh = g('dsh');
+    sc_ = g('sc');
+    h2 = dc.hg + cpV(Tc)*dsh;
+    h3 = dc.hf - cpL(Tc)*sc_;
+    h4 = h3;
+    m_dot = Qh_W / ((h2 - h3)*1e3);
+    h1 = h2 - We_W / (m_dot*1e3);
+    ssh = (h1 - de.hg) / cpV(Te);
+    if(document.activeElement.id !== 'ssh') document.getElementById('ssh').value = ssh.toFixed(2);
+  }
+
+  const s1=de.sg+cpV(Te)*ssh/(Te+273.15);
+
+  // Isentropic state 2s (for efficiency)
+  const h2s=isenH(s1,dc.P)??h2;
+  const eta_is=(h2s-h1)/Math.max(h2-h1,0.01);
+
+  // LMTD condenser (counter-flow: ref h2→h3, water Tcw_in→Tcw_out)
+  // dT at h2 end = T_ref_discharge - T_water_out = (Tc+dsh) - Tcw_o
+  // dT at h3 end = T_ref_subcooled  - T_water_in  = (Tc-sc_) - Tcw_i
+  const dT1c=(Tc+dsh)-Tcw_o, dT2c=(Tc-sc_)-Tcw_i;
+  const LMc=lmtd(dT1c,dT2c), UAc=Qh/LMc;
+
+  // LMTD evaporator (counter-flow: ref h4→h1, water Tew_in→Tew_out)
+  // dT at h1 end = T_water_in  - T_ref_suction  = Tew_i - (Te+ssh)
+  // dT at h4 end = T_water_out - T_ref_evap_in  = Tew_o - Te
+  const dT1e=Tew_i-(Te+ssh), dT2e=Tew_o-Te;
+  const LMe=lmtd(dT1e,dT2e), UAe=Qc/LMe;
+
+  return{
+    Tc,Te,Qc,We,Qh,
+    COP_c:Qc/We, COP_h:Qh/We,
+    LMc,UAc,LMe,UAe,eta_is,m_dot,
+    warnC:dT1c<=0||dT2c<=0, warnE:dT1e<=0||dT2e<=0,
+    cyc:{h1,h2,h2s,h3,h4,Pe:de.P,Pc:dc.P,s1},
+    inp:{Tcw_i,Tcw_o,Tew_i,Tew_o,Tc,Te,dsh,sc_,ssh,ac,ae},
+    dc,de
+  };
+}
+
+// ── Plotly traces ─────────────────────────────────────────────────────────
+function domeTraces(){
+  const d=PH.dome;
+  return[
+    {x:d.map(p=>p.hf),y:d.map(p=>p.P),mode:'lines',
+     line:{color:'#d2a8ff',width:2.5},name:'Sat. Fluid',
+     hovertemplate:'h=%{x:.1f} kJ/kg  P=%{y:.3f} bar<extra>Sat. Fluid</extra>'},
+    {x:d.map(p=>p.hg),y:d.map(p=>p.P),mode:'lines',
+     line:{color:'#d2a8ff',width:2.5},name:'Sat. Fluid (V)',showlegend:false,
+     hovertemplate:'h=%{x:.1f} kJ/kg  P=%{y:.3f} bar<extra>Sat. Fluid</extra>'},
+  ];
+}
+
+function isenTraces(){
+  return PH.isen.map(l=>({
+    x:l.pts.map(p=>p.h),y:l.pts.map(p=>p.P),
+    mode:'lines',line:{color:'rgba(48,54,61,1)',width:0.7},
+    showlegend:false,hoverinfo:'skip'
+  }));
+}
+
+function cycleTraces(cyc,inp,dc,de){
+  const{h1,h2,h2s,h3,h4,Pe,Pc}=cyc;
+  const{Tcw_i,Tcw_o,Tew_i,Tew_o,Tc,Te,dsh,sc_,ssh,ac,ae}=inp;
+  const T=[];
+
+  // 4→1 Evaporation (horizontal at Pe)
+  T.push({x:[h4,h1],y:[Pe,Pe],mode:'lines',
+    line:{color:'#388bfd',width:3.5},name:'Evaporation',yaxis:'y',
+    hovertemplate:'h=%{x:.1f} kJ/kg<extra>Evaporation</extra>'});
+
+  // 1→2 Compression — STRAIGHT LINE on primary yaxis (log P)
+  T.push({x:[h1,h2],y:[Pe,Pc],mode:'lines',
+    line:{color:'#f0883e',width:3.5},name:'Compression',yaxis:'y',
+    hovertemplate:'h=%{x:.1f} kJ/kg<extra>Compression</extra>'});
+
+  // 2→3 Condensation (horizontal at Pc)
+  T.push({x:[h2,h3],y:[Pc,Pc],mode:'lines',
+    line:{color:'#f85149',width:3.5},name:'Condensation',yaxis:'y',
+    hovertemplate:'h=%{x:.1f} kJ/kg<extra>Condensation</extra>'});
+
+  // 3→4 Expansion (isenthalpic, vertical ish)
+  T.push({x:[h3,h4],y:[Pc,Pe],mode:'lines',
+    line:{color:'#8b949e',width:2,dash:'dash'},name:'Expansion',yaxis:'y',
+    hovertemplate:'h=%{x:.1f} kJ/kg<extra>Expansion</extra>'});
+
+  // State points on primary yaxis
+  T.push({
+    x:[h1,h2,h3,h4],y:[Pe,Pc,Pc,Pe],mode:'markers+text',yaxis:'y',
+    marker:{color:'#f0f6fc',size:9,symbol:'circle',line:{color:'#0d1117',width:1.5}},
+    text:['1','2','3','4'],
+    textfont:{color:'#f0f6fc',size:11},
+    textposition:['bottom right','top right','top left','bottom left'],
+    name:'States',
+    hovertemplate:'State %{text}<br>h=%{x:.1f} kJ/kg  P=%{y:.3f} bar<extra></extra>'
+  });
+
+  // ── Water temperature lines mapped to their saturation pressures ────
+  // HOT WATER (condenser): water flows from h3-end (Tcw_in) to h2-end (Tcw_out)
+  T.push({
+    x:[h3,h2], y:[domeByT(Tcw_i).P, domeByT(Tcw_o).P],
+    customdata:[Tcw_i,Tcw_o],
+    mode:'lines', yaxis:'y',
+    line:{color:'rgba(248,100,80,0.85)',width:2.5,dash:'dot'},
+    name:'Hot water',
+    hovertemplate:'h=%{x:.1f} kJ/kg  T<sub>w</sub>=%{customdata:.1f}°C<extra>Hot water</extra>'
+  });
+
+  // COLD WATER (evaporator): water flows from h1-end (Tew_in) to h4-end (Tew_out)
+  T.push({
+    x:[h1,h4], y:[domeByT(Tew_i).P, domeByT(Tew_o).P],
+    customdata:[Tew_i,Tew_o],
+    mode:'lines', yaxis:'y',
+    line:{color:'rgba(88,166,255,0.85)',width:2.5,dash:'dot'},
+    name:'Cold water',
+    hovertemplate:'h=%{x:.1f} kJ/kg  T<sub>w</sub>=%{customdata:.1f}°C<extra>Cold water</extra>'
+  });
+
+  // Condenser approach dimension line
+  T.push({
+    x: [h2, h2 + 25, null, h2, h2 + 25], 
+    y: [domeByT(Tcw_o).P, domeByT(Tcw_o).P, null, dc.P, dc.P],
+    mode: 'lines', yaxis: 'y',
+    line: {color: 'rgba(240,136,62,0.5)', width: 1},
+    hoverinfo: 'skip', showlegend: false
+  });
+
+  // Evaporator approach dimension line
+  T.push({
+    x: [h4, h4 - 25, null, h4, h4 - 25], 
+    y: [domeByT(Tew_o).P, domeByT(Tew_o).P, null, de.P, de.P],
+    mode: 'lines', yaxis: 'y',
+    line: {color: 'rgba(88,166,255,0.5)', width: 1},
+    hoverinfo: 'skip', showlegend: false
+  });
+
+  return T;
+}
+
+function buildAnnotations(cyc,inp,dc,de){
+  const{h1,h2,h3,h4,Pe,Pc}=cyc;
+  const{Tcw_i,Tcw_o,Tew_i,Tew_o,Tc,Te,dsh,sc_,ssh,ac,ae}=inp;
+  const A=[];
+
+  // Pressure level labels (on primary yaxis)
+  A.push({x:137,y:Math.log10(Pe),xref:'x',yref:'y',
+    text:`P<sub>e</sub>=${de.P.toFixed(2)} bar  (T<sub>e</sub>=${Te.toFixed(1)}°C)`,
+    showarrow:false,font:{color:'#388bfd',size:9},
+    xanchor:'left',yanchor:'bottom'});
+  A.push({x:137,y:Math.log10(Pc),xref:'x',yref:'y',
+    text:`P<sub>c</sub>=${dc.P.toFixed(2)} bar  (T<sub>c</sub>=${Tc.toFixed(1)}°C)`,
+    showarrow:false,font:{color:'#f0883e',size:9},
+    xanchor:'left',yanchor:'bottom'});
+
+  // ── Hot water arrow → pointing right at midpoint of hot water line ─────
+  const hHmid=(h3+h2)/2;
+  const THmid=(Tcw_i+Tcw_o)/2;
+  const pHmid=domeByT(THmid).P;
+  // Small offset to make visible arrow
+  const dh=(h2-h3)*0.05;
+  A.push({x:hHmid+dh,y:Math.log10(pHmid),xref:'x',yref:'y',
+    ax:hHmid-dh,ay:Math.log10(pHmid),axref:'x',ayref:'y',
+    arrowhead:3,arrowsize:1.3,arrowwidth:2,
+    arrowcolor:'rgba(248,100,80,0.9)',
+    showarrow:true,text:'',hovertext:'Hot water flow →'});
+
+  // Hot water endpoint labels
+  A.push({x:h3,y:Math.log10(domeByT(Tcw_i).P),xref:'x',yref:'y',
+    ax:-40,ay:25,
+    text:`T<sub>w,c,in</sub>=${Tcw_i}°C`,
+    showarrow:true, arrowhead:0, arrowwidth:1, arrowcolor:'rgba(139,148,158,0.5)',
+    font:{color:'rgba(248,100,80,0.9)',size:9},
+    bgcolor:'rgba(13,17,23,0.7)',borderpad:2});
+  A.push({x:h2,y:Math.log10(domeByT(Tcw_o).P),xref:'x',yref:'y',
+    ax:-40,ay:25,
+    text:`T<sub>w,c,out</sub>=${Tcw_o}°C`,
+    showarrow:true, arrowhead:0, arrowwidth:1, arrowcolor:'rgba(139,148,158,0.5)',
+    font:{color:'rgba(248,100,80,0.9)',size:9},
+    bgcolor:'rgba(13,17,23,0.7)',borderpad:2});
+
+  // ── Condenser approach arrow ──────────────────────────────────────────
+  if(Math.abs(Tc-Tcw_o)>0.3){
+    const xPosC = h2 + 20;
+    const yTopC = Math.max(Math.log10(dc.P), Math.log10(domeByT(Tcw_o).P));
+    const yBotC = Math.min(Math.log10(dc.P), Math.log10(domeByT(Tcw_o).P));
+    
+    // Top arrow pointing down
+    A.push({
+      x: xPosC, y: yTopC,
+      xref: 'x', yref: 'y',
+      ax: 0, ay: -35,
+      text: `Appr.<br>${ac.toFixed(1)} K`,
+      font: {color: '#f0883e', size: 9},
+      arrowhead: 2, arrowside: 'end',
+      arrowsize: 1, arrowwidth: 1,
+      arrowcolor: 'rgba(240,136,62,0.85)',
+      showarrow: true,
+      align: 'center', startstandoff: 2,
+      bgcolor: 'rgba(13,17,23,0.85)', borderpad: 2
+    });
+    // Bottom arrow pointing up
+    A.push({
+      x: xPosC, y: yBotC,
+      xref: 'x', yref: 'y',
+      ax: 0, ay: 15,
+      text: '',
+      arrowhead: 2, arrowside: 'end',
+      arrowsize: 1, arrowwidth: 1,
+      arrowcolor: 'rgba(240,136,62,0.85)',
+      showarrow: true
+    });
+  }
+
+  // ── Cold water arrow ← pointing left at midpoint ──────────────────────
+  const hEmid=(h1+h4)/2;
+  const TEmid=(Tew_i+Tew_o)/2;
+  const pEmid=domeByT(TEmid).P;
+  const dhe=(h1-h4)*0.05;
+  A.push({x:hEmid-dhe,y:Math.log10(pEmid),xref:'x',yref:'y',
+    ax:hEmid+dhe,ay:Math.log10(pEmid),axref:'x',ayref:'y',
+    arrowhead:3,arrowsize:1.3,arrowwidth:2,
+    arrowcolor:'rgba(88,166,255,0.9)',
+    showarrow:true,text:'',hovertext:'Cold water flow ←'});
+
+  // Cold water endpoint labels
+  A.push({x:h1,y:Math.log10(domeByT(Tew_i).P),xref:'x',yref:'y',
+    ax:40,ay:-25,
+    text:`T<sub>w,e,in</sub>=${Tew_i}°C`,
+    showarrow:true, arrowhead:0, arrowwidth:1, arrowcolor:'rgba(139,148,158,0.5)',
+    font:{color:'rgba(88,166,255,0.9)',size:9},
+    bgcolor:'rgba(13,17,23,0.7)',borderpad:2});
+  A.push({x:h4,y:Math.log10(domeByT(Tew_o).P),xref:'x',yref:'y',
+    ax:40,ay:-25,
+    text:`T<sub>w,e,out</sub>=${Tew_o}°C`,
+    showarrow:true, arrowhead:0, arrowwidth:1, arrowcolor:'rgba(139,148,158,0.5)',
+    font:{color:'rgba(88,166,255,0.9)',size:9},
+    bgcolor:'rgba(13,17,23,0.7)',borderpad:2});
+
+  // ── Evaporator approach arrow ─────────────────────────────────────────
+  if(Math.abs(Tew_o-Te)>0.3){
+    const xPosE = h4 - 20;
+    const yTopE = Math.max(Math.log10(domeByT(Tew_o).P), Math.log10(de.P));
+    const yBotE = Math.min(Math.log10(domeByT(Tew_o).P), Math.log10(de.P));
+    
+    // Top arrow pointing down
+    A.push({
+      x: xPosE, y: yTopE,
+      xref: 'x', yref: 'y',
+      ax: 0, ay: -15,
+      text: '',
+      arrowhead: 2, arrowside: 'end',
+      arrowsize: 1, arrowwidth: 1,
+      arrowcolor: 'rgba(88,166,255,0.85)',
+      showarrow: true
+    });
+    // Bottom arrow pointing up
+    A.push({
+      x: xPosE, y: yBotE,
+      xref: 'x', yref: 'y',
+      ax: 0, ay: 35,
+      text: `Appr.<br>${ae.toFixed(1)} K`,
+      font: {color: '#58a6ff', size: 9},
+      arrowhead: 2, arrowside: 'end',
+      arrowsize: 1, arrowwidth: 1,
+      arrowcolor: 'rgba(88,166,255,0.85)',
+      showarrow: true,
+      align: 'center', startstandoff: 2,
+      bgcolor: 'rgba(13,17,23,0.85)', borderpad: 2
+    });
+  }
+
+  return A;
+}
+
+function buildLayout(R){
+  const {Pe,Pc,h4} = R.cyc;
+  const m_dot = R.m_dot;
+
+  return{
+    paper_bgcolor:'#161b22',plot_bgcolor:'#0d1117',
+    font:{color:'#8b949e',family:'Segoe UI,system-ui,sans-serif',size:11},
+    xaxis:{
+      title:{text:'Specific Enthalpy  h  (kJ/kg)',font:{size:11,color:'#8b949e'}, standoff: 4},
+      range:[130,560],gridcolor:'#21262d',linecolor:'#30363d',
+      tickcolor:'#30363d',zerolinecolor:'#21262d',tickfont:{size:10},
+      anchor: 'free', position: 0.15
+    },
+    xaxis2:{
+      overlaying:'x',
+      side:'bottom',
+      anchor:'free',
+      position: 0,
+      title:{text:'Power (kW)',font:{size:11,color:'#8b949e'},standoff:4},
+      range:[m_dot * (130 - h4), m_dot * (560 - h4)],
+      gridcolor:'transparent',linecolor:'#30363d',tickcolor:'#30363d',
+      zeroline:false,tickfont:{size:10}
+    },
+    yaxis:{
+      title:{text:'Pressure P (bar) & T<sub>sat</sub>',font:{size:11,color:'#8b949e'},standoff:4},
+      type:'log',range:[Math.log10(2),Math.log10(30)],
+      gridcolor:'#21262d',linecolor:'#30363d',tickcolor:'#30363d',
+      tickfont:{size:10},
+      tickvals:[2,3,4,5,7,10,15,20,30],
+      ticktext:[2,3,4,5,7,10,15,20,30].map(p => `${p} (${tSatFromP(p).toFixed(1)}°C)`),
+      domain: [0.15, 1]
+    },
+    legend:{
+      bgcolor:'rgba(13,17,23,0.85)',bordercolor:'#30363d',borderwidth:1,
+      x:0.98,y:0.16,xanchor:'right',yanchor:'bottom',font:{size:10,color:'#8b949e'},
+      tracegroupgap:2
+    },
+    margin:{l:110,r:30,t:40,b:60},
+    hovermode:'closest',
+    title:{
+      text:'<b>Pressure–Enthalpy Diagram</b>  ·  R1234ze(E)',
+      font:{color:'#c9d1d9',size:13},x:0.55,xanchor:'center',y:0.98
+    },
+    shapes:[
+      {type:'line',layer:'below',x0:130,x1:560,
+       y0:Math.log10(Pe),y1:Math.log10(Pe),
+       line:{color:'rgba(56,139,253,0.12)',width:1}},
+      {type:'line',layer:'below',x0:130,x1:560,
+       y0:Math.log10(Pc),y1:Math.log10(Pc),
+       line:{color:'rgba(248,81,73,0.12)',width:1}}
+    ],
+  };
+}
+
+// ── DOM updates & chart render ────────────────────────────────────────────
+const fmt=(v,d=1)=>isNaN(v)||!isFinite(v)?'—':v.toFixed(d);
+let init=false;
+const CFG={responsive:true,displayModeBar:true,modeBarButtonsToRemove:['lasso2d','select2d'],displaylogo:false};
+
+function calcHXProfiles(R) {
+  const {cyc, inp, dc, de, m_dot, Qh, Qc} = R;
+  const Q1c = m_dot * (cyc.h2 - dc.hg);
+  const Q2c = m_dot * (dc.hg - dc.hf); 
+  const Q3c = m_dot * (dc.hf - cyc.h3);
+  const qV_c = [0, Q1c, Q1c+Q2c, Qh];
+  const pV_c = qV_c.map(q => q/Qh*100);
+  const T_ref_c = [inp.Tc + inp.dsh, inp.Tc, inp.Tc, inp.Tc - inp.sc_];
+  const T_w_c = [inp.Tcw_o, inp.Tcw_o - Q1c/Qh*(inp.Tcw_o - inp.Tcw_i), inp.Tcw_o - (Q1c+Q2c)/Qh*(inp.Tcw_o - inp.Tcw_i), inp.Tcw_i];
+  const dT_c = T_ref_c.map((t, i) => t - T_w_c[i]);
+  const lmc1 = lmtd(dT_c[0], dT_c[1]), uac1 = Q1c/lmc1;
+  const lmc2 = lmtd(dT_c[1], dT_c[2]), uac2 = Q2c/lmc2;
+  const lmc3 = lmtd(dT_c[2], dT_c[3]), uac3 = Q3c/lmc3;
+  const uac_eff = uac1 + uac2 + uac3;
+  const lmc_eff = Qh / uac_eff;
+
+  const cond = {
+    x: pV_c, qr: qV_c, T_ref: T_ref_c, T_w: T_w_c, dT: dT_c,
+    zones: [
+      {name: 'DSH', Q: Q1c, pct: Q1c/Qh*100, LMTD: lmc1, UA: uac1, T_ref_in: T_ref_c[0], T_ref_out: T_ref_c[1], T_w_in: T_w_c[1], T_w_out: T_w_c[0]},
+      {name: 'Cond', Q: Q2c, pct: Q2c/Qh*100, LMTD: lmc2, UA: uac2, T_ref_in: T_ref_c[1], T_ref_out: T_ref_c[2], T_w_in: T_w_c[2], T_w_out: T_w_c[1]},
+      {name: 'Sub-<br>cooling', Q: Q3c, pct: Q3c/Qh*100, LMTD: lmc3, UA: uac3, T_ref_in: T_ref_c[2], T_ref_out: T_ref_c[3], T_w_in: T_w_c[3], T_w_out: T_w_c[2]}
+    ],
+    eff: { Q: Qh, LMTD: lmc_eff, UA: uac_eff }
+  };
+
+  const Q1e = m_dot * (de.hg - cyc.h4);
+  const Q2e = m_dot * (cyc.h1 - de.hg);
+  const qV_e = [0, Q1e, Qc];
+  const pV_e = qV_e.map(q => q/Qc*100);
+  const T_ref_e = [inp.Te, inp.Te, inp.Te + inp.ssh];
+  const T_w_e = [inp.Tew_o, inp.Tew_o + Q1e/Qc*(inp.Tew_i - inp.Tew_o), inp.Tew_i];
+  const dT_e = T_w_e.map((t, i) => t - T_ref_e[i]);
+  const lme1 = lmtd(dT_e[0], dT_e[1]), uae1 = Q1e/lme1;
+  const lme2 = lmtd(dT_e[1], dT_e[2]), uae2 = Q2e/lme2;
+  const uae_eff = uae1 + uae2;
+  const lme_eff = Qc / uae_eff;
+
+  const evap = {
+    x: pV_e, qr: qV_e, T_ref: T_ref_e, T_w: T_w_e, dT: dT_e,
+    zones: [
+      {name: 'Evap', Q: Q1e, pct: Q1e/Qc*100, LMTD: lme1, UA: uae1, T_ref_in: T_ref_e[0], T_ref_out: T_ref_e[1], T_w_in: T_w_e[1], T_w_out: T_w_e[0]},
+      {name: 'SSH', Q: Q2e, pct: Q2e/Qc*100, LMTD: lme2, UA: uae2, T_ref_in: T_ref_e[1], T_ref_out: T_ref_e[2], T_w_in: T_w_e[2], T_w_out: T_w_e[1]}
+    ],
+    eff: { Q: Qc, LMTD: lme_eff, UA: uae_eff }
+  };
+
+  return { cond, evap };
+}
+
+function renderHXTable(prof, isCond=false) {
+  const totCls = isCond ? 'total-col cond' : 'total-col';
+  
+  let h = `<div class="hx-cross-table">`;
+  
+  // Column 1: Labels
+  h += `<div class="hx-cross-col label-col" style="flex: 1.2;">
+    <div class="hx-cross-cell hdr">Zone</div>
+    <div class="hx-cross-cell">T_in,ref (°C)</div>
+    <div class="hx-cross-cell">T_out,ref (°C)</div>
+    <div class="hx-cross-cell">T_in,water (°C)</div>
+    <div class="hx-cross-cell">T_out,water (°C)</div>
+    <div class="hx-cross-cell">Heat Transferred kW (%)</div>
+    <div class="hx-cross-cell">LMTD (K)</div>
+    <div class="hx-cross-cell">UA (kW/K)</div>
+  </div>`;
+  
+  // Data columns
+  prof.zones.forEach(z => {
+    h += `<div class="hx-cross-col" style="flex: 1;">
+      <div class="hx-cross-cell hdr" style="line-height:1.2;">${z.name}</div>
+      <div class="hx-cross-cell" style="font-family:monospace;">${fmt(z.T_ref_in)}</div>
+      <div class="hx-cross-cell" style="font-family:monospace;">${fmt(z.T_ref_out)}</div>
+      <div class="hx-cross-cell" style="font-family:monospace;">${fmt(z.T_w_in)}</div>
+      <div class="hx-cross-cell" style="font-family:monospace;">${fmt(z.T_w_out)}</div>
+      <div class="hx-cross-cell" style="font-family:monospace;">${fmt(z.Q, 2)} (${fmt(z.pct, 1)}%)</div>
+      <div class="hx-cross-cell" style="font-family:monospace;">${fmt(z.LMTD)}</div>
+      <div class="hx-cross-cell" style="font-family:monospace;">${fmt(z.UA, 2)}</div>
+    </div>`;
+  });
+  
+  // Total column
+  h += `<div class="hx-cross-col ${totCls}" style="flex: 1;">
+    <div class="hx-cross-cell hdr">Total</div>
+    <div class="hx-cross-cell">—</div>
+    <div class="hx-cross-cell">—</div>
+    <div class="hx-cross-cell">—</div>
+    <div class="hx-cross-cell">—</div>
+    <div class="hx-cross-cell" style="font-family:monospace;">${fmt(prof.eff.Q, 2)} (100.0%)</div>
+    <div class="hx-cross-cell" style="font-family:monospace;">${fmt(prof.eff.LMTD)}</div>
+    <div class="hx-cross-cell" style="font-family:monospace;">${fmt(prof.eff.UA, 2)}</div>
+  </div>`;
+  
+  h += `</div>`;
+  return h;
+}
+
+let hxInit = false;
+function updateHXPlots(hx) {
+  const cfg = {responsive:true,displayModeBar:false,margin:{l:45,r:15,t:40,b:35},plot_bgcolor:'#0d1117',paper_bgcolor:'#161b22',font:{size:10,color:'#8b949e'},hovermode:'x unified'};
+  
+  // CONDENSER T
+  const ctData = [
+    {x:hx.cond.x, y:hx.cond.T_ref, name:'Refrigerant', line:{color:'#f0883e',width:2}, hovertemplate:'%{y:.1f}°C'},
+    {x:hx.cond.x, y:hx.cond.T_w, name:'Hot Water', line:{color:'#f85149',width:2,dash:'dot'}, hovertemplate:'%{y:.1f}°C'}
+  ];
+  const ctLay = {...cfg, title:{text:'Condenser: T vs % Heat',font:{size:11,color:'#c9d1d9'},y:0.95}, xaxis:{title:{text:'% Heat Transferred',standoff:5},gridcolor:'#21262d',zeroline:false}, yaxis:{title:{text:'Temperature (°C)',standoff:5},gridcolor:'#21262d'}, showlegend:false};
+
+  // CONDENSER dT
+  const cdtData = [{x:hx.cond.x, y:hx.cond.dT, name:'ΔT', line:{color:'#d2a8ff',width:2}}];
+  const cdtLay = {...cfg, title:{text:'Condenser: ΔT vs % Heat',font:{size:11,color:'#c9d1d9'},y:0.95}, xaxis:{title:{text:'% Heat Transferred',standoff:5},gridcolor:'#21262d',zeroline:false}, yaxis:{title:{text:'Temp Diff (K)',standoff:5},gridcolor:'#21262d', rangemode:'tozero'}, showlegend:false};
+
+  // EVAPORATOR T
+  const etData = [
+    {x:hx.evap.x, y:hx.evap.T_ref, name:'Refrigerant', line:{color:'#388bfd',width:2}, hovertemplate:'%{y:.1f}°C'},
+    {x:hx.evap.x, y:hx.evap.T_w, name:'Cold Water', line:{color:'#58a6ff',width:2,dash:'dot'}, hovertemplate:'%{y:.1f}°C'}
+  ];
+  const etLay = {...cfg, title:{text:'Evaporator: T vs % Heat',font:{size:11,color:'#c9d1d9'},y:0.95}, xaxis:{title:{text:'% Heat Transferred',standoff:5},gridcolor:'#21262d',zeroline:false}, yaxis:{title:{text:'Temperature (°C)',standoff:5},gridcolor:'#21262d'}, showlegend:false};
+
+  // EVAPORATOR dT
+  const edtData = [{x:hx.evap.x, y:hx.evap.dT, name:'ΔT', line:{color:'#d2a8ff',width:2}}];
+  const edtLay = {...cfg, title:{text:'Evaporator: ΔT vs % Heat',font:{size:11,color:'#c9d1d9'},y:0.95}, xaxis:{title:{text:'% Heat Transferred',standoff:5},gridcolor:'#21262d',zeroline:false}, yaxis:{title:{text:'Temp Diff (K)',standoff:5},gridcolor:'#21262d',rangemode:'tozero'}, showlegend:false};
+
+  if(!hxInit) {
+    Plotly.newPlot('hx-cond-t', ctData, ctLay, cfg);
+    Plotly.newPlot('hx-cond-dt', cdtData, cdtLay, cfg);
+    Plotly.newPlot('hx-evap-t', etData, etLay, cfg);
+    Plotly.newPlot('hx-evap-dt', edtData, edtLay, cfg);
+    hxInit=true;
+  } else {
+    Plotly.react('hx-cond-t', ctData, ctLay, cfg);
+    Plotly.react('hx-cond-dt', cdtData, cdtLay, cfg);
+    Plotly.react('hx-evap-t', etData, etLay, cfg);
+    Plotly.react('hx-evap-dt', edtData, edtLay, cfg);
+  }
+
+  document.getElementById('hx-cond-table-content').innerHTML = renderHXTable(hx.cond, true);
+  document.getElementById('hx-evap-table-content').innerHTML = renderHXTable(hx.evap, false);
+}
+
+function upd_mode() {
+  const mode = document.getElementById('derive_mode').value;
+  document.getElementById('sc').disabled = (mode === 'derive_sc');
+  document.getElementById('dsh').disabled = (mode === 'derive_dsh');
+  document.getElementById('ssh').disabled = (mode === 'derive_ssh');
+  upd();
+}
+
+function upd(){
+  let R;
+  try{R=calculate();}catch(e){console.error(e);return;}
+
+  window.currentHX = calcHXProfiles(R);
+  try{ updateHXPlots(window.currentHX); } catch(e){ console.error(e); }
+
+  document.getElementById('o_tc').textContent=fmt(R.Tc);
+  document.getElementById('o_qh').textContent=fmt(R.Qh);
+  document.getElementById('o_lc').textContent=fmt(window.currentHX?window.currentHX.cond.eff.LMTD:R.LMc);
+  document.getElementById('o_uac').textContent=fmt(window.currentHX?window.currentHX.cond.eff.UA:R.UAc,2);
+  document.getElementById('w_cond').style.display=R.warnC?'block':'none';
+
+  document.getElementById('o_te').textContent=fmt(R.Te);
+  document.getElementById('o_qc').textContent=fmt(R.Qc);
+  document.getElementById('o_le').textContent=fmt(window.currentHX?window.currentHX.evap.eff.LMTD:R.LMe);
+  document.getElementById('o_uae').textContent=fmt(window.currentHX?window.currentHX.evap.eff.UA:R.UAe,2);
+  document.getElementById('w_evap').style.display=R.warnE?'block':'none';
+
+  document.getElementById('o_coph').textContent=fmt(R.COP_h,2);
+  document.getElementById('o_we').textContent=fmt(R.We);
+  document.getElementById('o_eta').textContent=fmt(R.eta_is*100);
+  document.getElementById('o_mdot').textContent=fmt(R.m_dot,3);
+  document.getElementById('o_pr').textContent=fmt(R.cyc.Pc/R.cyc.Pe,2);
+  document.getElementById('o_t2').textContent=fmt(R.inp.Tc+R.inp.dsh);
+
+  document.getElementById('s_copc').textContent=fmt(R.COP_c,2);
+  document.getElementById('s_coph').textContent=fmt(R.COP_h,2);
+  document.getElementById('s_qc').textContent=fmt(R.Qc)+' kW';
+  document.getElementById('s_qh').textContent=fmt(R.Qh)+' kW';
+  document.getElementById('s_we').textContent=fmt(R.We)+' kW';
+  document.getElementById('s_pr').textContent=fmt(R.cyc.Pc/R.cyc.Pe,2);
+  document.getElementById('s_eta').textContent=fmt(R.eta_is*100)+'%';
+  document.getElementById('s_te').textContent=fmt(R.Te)+'°C';
+  document.getElementById('s_tc').textContent=fmt(R.Tc)+'°C';
+
+  const traces=[
+    ...domeTraces(),
+    ...cycleTraces(R.cyc,R.inp,R.dc,R.de),
+    {
+      x: [R.m_dot * (130 - R.cyc.h4), R.m_dot * (560 - R.cyc.h4)],
+      y: [R.de.P, R.de.P],
+      xaxis: 'x2', yaxis: 'y',
+      mode: 'lines', line: {color: 'transparent'},
+      showlegend: false, hoverinfo: 'skip'
+    }
+  ];
+  const layout=buildLayout(R);
+  layout.annotations=buildAnnotations(R.cyc,R.inp,R.dc,R.de);
+
+  if(!init){
+    Plotly.newPlot('ph',traces,layout,CFG);
+    init=true;
+    const ro=new ResizeObserver(() => {
+      window.requestAnimationFrame(() => {
+        Plotly.relayout('ph',{autosize:true});
+      });
+    });
+    ro.observe(document.getElementById('ph'));
+  }else{
+    Plotly.react('ph',traces,layout,CFG);
+  }
+}
+
+window.switchTab = function(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-btn-' + tab).classList.add('active');
+  document.getElementById(tab === 'ph' ? 'ph' : 'hx-view').classList.add('active');
+  
+  if (tab === 'hx') {
+    requestAnimationFrame(() => {
+      Plotly.Plots.resize('hx-cond-t');
+      Plotly.Plots.resize('hx-cond-dt');
+      Plotly.Plots.resize('hx-evap-t');
+      Plotly.Plots.resize('hx-evap-dt');
+    });
+  } else if(tab === 'ph') {
+    requestAnimationFrame(() => {
+      Plotly.Plots.resize('ph');
+    });
+  }
+};
+
+upd_mode();
+</script>
+</body>
+</html>

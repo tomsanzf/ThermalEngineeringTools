@@ -1,0 +1,6 @@
+{
+  "name": "Stratified Thermal Storage",
+  "description": "A 1D finite-volume simulator of thermal stratification in a water tank, featuring draggable supply/return connections and real-time charging/discharging visualization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
