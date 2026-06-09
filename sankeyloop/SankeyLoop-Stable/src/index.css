@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-serif: 'Cormorant Garamond', Georgia, serif;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #f8f7f4;
+  --surface: #ffffff;
+  --surface2: #f1f0ed;
+  --border: #e2e0db;
+  --text: #1a1917;
+  --text2: #6b6863;
+  --text3: #9b9894;
+  --accent: #e8541a;
+  --accent-light: #fde8da;
+  --danger: #dc2626;
+  --radius: 6px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.10);
+}
+
+[data-theme="dark"] {
+  --bg: #1e1c1a;
+  --surface: #272421;
+  --surface2: #2f2c29;
+  --border: #3a3734;
+  --text: #f0ede8;
+  --text2: #9b9894;
+  --text3: #6b6863;
+  --accent: #e8541a;
+  --accent-light: #3d1f0a;
+  --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  @apply font-sans;
+}
+
+input[type="text"], input[type="number"], select, textarea {
+  @apply bg-[var(--surface2)] border-[var(--border)] border rounded-[var(--radius)] text-[var(--text)] text-xs p-1.5 outline-none transition-colors focus:border-[var(--accent)];
+}
+
+input[type="range"] {
+  @apply accent-[var(--accent)] cursor-pointer;
+}
+
+.section-body {
+  @apply flex flex-col gap-2.5 p-3.5;
+}
+
+.radio-btn {
+  @apply flex-1 text-center py-1.5 px-2 border border-[var(--border)] rounded-[var(--radius)] cursor-pointer text-[11px] text-[var(--text2)] select-none transition-all hover:border-[var(--accent)] hover:text-[var(--text)];
+}
+
+.radio-btn.active {
+  @apply bg-[var(--accent)] border-[var(--accent)] text-white font-medium;
+}
+
+.btn {
+  @apply inline-flex items-center gap-1.5 py-1.5 px-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface2)] text-[var(--text)] text-xs font-medium cursor-pointer transition-all whitespace-nowrap hover:border-[var(--accent)] hover:text-[var(--accent)];
+}
+
+.btn-primary {
+  @apply bg-[var(--accent)] border-[var(--accent)] text-white hover:opacity-90;
+}
+
+.data-table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+.data-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+@keyframes sl-shimmer {
+  0%   { opacity: 0; }
+  40%  { opacity: 0; }
+  50%  { opacity: 1; }
+  60%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+.sl-anim-overlay {
+  animation: sl-shimmer linear infinite;
+  pointer-events: none;
+}
+
