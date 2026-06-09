@@ -61,7 +61,11 @@ function App() {
     ambientTemp: 20,
     heatLossCoef: 0.8, // W/m²K (highly insulated)
     conductionCoef: 1.5, // W/K internal conduction
-    numNodes: NUM_NODES
+    numNodes: NUM_NODES,
+    riMin: 100,
+    riMax: 500,
+    overrideBuoyancy: false,
+    buoyancyOverrideValue: 0.5
   });
   
   const [simSpeed, setSimSpeed] = useState<number>(5); // 0 (paused), 1x, 5x, 10x, 20x
@@ -201,8 +205,7 @@ function App() {
     let newX = e.clientX - dragOffset.x;
     let newY = e.clientY - dragOffset.y;
     
-    const isDraggedSource = state.loops.find(l => l.id === draggedBox)?.type === 'source';
-    const boxH = expandedBoxes[draggedBox] ? (isDraggedSource ? 210 : 180) : 85;
+    const boxH = expandedBoxes[draggedBox] ? 210 : 85;
     
     // Bounds check to keep within the 1050x580 canvas
     // Box dimensions: width 220px, height varies from 85px to 180px.
@@ -248,7 +251,7 @@ function App() {
   // Modify loop parameters
   const updateLoopParam = (
     loopId: string, 
-    field: 'designPower' | 'designTempSupply' | 'designTempReturn' | 'name' | 'limitedByPower', 
+    field: 'designPower' | 'designTempSupply' | 'designTempReturn' | 'name' | 'limitedByPower' | 'sinkControlMode', 
     value: any
   ) => {
     setState(prev => ({
@@ -277,12 +280,61 @@ function App() {
   ) / 10;
 
   // -------------------------------------------------------------
+  // Richardson Number and Buoyancy calculation for display
+  // -------------------------------------------------------------
+  const g_grav = 9.81;
+  const beta_therm = 0.0006;
+  const H_t = params.tankHeight;
+  const A_t = (params.tankVolume / 1000) / H_t;
+
+  let maxFlow_m3s_disp = 0;
+  state.loops.forEach(loop => {
+    if (!loop.isActive) return;
+    const actuals = getLoopActuals(loop, state.temperatures, state.ports);
+    const flow_m3s = actuals.flowRate / 3600;
+    if (flow_m3s > maxFlow_m3s_disp) {
+      maxFlow_m3s_disp = flow_m3s;
+    }
+  });
+
+  const u_vel = A_t > 0 ? (maxFlow_m3s_disp / A_t) : 0;
+  const tMax_disp = Math.max(...state.temperatures);
+  const tMin_disp = Math.min(...state.temperatures);
+  const deltaT_disp = Math.max(0.1, tMax_disp - tMin_disp);
+
+  let displayRi = Infinity;
+  let displayEta = 1.0;
+  if (u_vel > 0) {
+    displayRi = (g_grav * beta_therm * deltaT_disp * H_t) / (u_vel * u_vel);
+  }
+
+  if (params.overrideBuoyancy) {
+    displayEta = Math.min(1.0, Math.max(0.0, params.buoyancyOverrideValue));
+  } else if (u_vel > 0) {
+    // Guard against non-positive, NaN, or invalid min/max limits to prevent Infinity/NaN in log10
+    const cleanMin = isNaN(params.riMin) || params.riMin <= 0 ? 0.1 : params.riMin;
+    const cleanMax = isNaN(params.riMax) || params.riMax <= cleanMin ? cleanMin + 1 : params.riMax;
+    
+    const logMin = Math.log10(cleanMin);
+    const logMax = Math.log10(cleanMax);
+    if (displayRi >= cleanMax) {
+      displayEta = 1.0;
+    } else if (displayRi <= cleanMin) {
+      displayEta = 0.0;
+    } else if (logMax > logMin) {
+      displayEta = (Math.log10(displayRi) - logMin) / (logMax - logMin);
+    } else {
+      displayEta = 1.0;
+    }
+  }
+
+  // -------------------------------------------------------------
   // Internal Flow Math (Calculating centers of mass for ports)
   // -------------------------------------------------------------
   const getPortH = (id: string) => state.ports.find(p => p.id === id)?.height || 0.5;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col antialiased">
+    <div className="h-screen bg-slate-950 text-slate-100 font-sans flex flex-col antialiased overflow-hidden">
       {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center space-x-4">
@@ -519,7 +571,7 @@ function App() {
 
                     // Return: Box bottom-left to Tank
                     const isExpanded = expandedBoxes[loop.id];
-                    const boxH = isExpanded ? 180 : 85;
+                    const boxH = isExpanded ? 210 : 85;
                     const x1_r = box.x;
                     const y1_r = box.y + boxH - 25;
                     const x2_r = tankRight;
@@ -861,7 +913,7 @@ function App() {
                 const isExpanded = expandedBoxes[loop.id];
                 const actuals = getLoopActuals(loop, state.temperatures, state.ports);
                 const isSource = loop.type === 'source';
-                const boxH = isExpanded ? 180 : 85;
+                const boxH = isExpanded ? 210 : 85;
 
                 return (
                   <div
@@ -937,7 +989,7 @@ function App() {
                             />
                           </div>
 
-                          {isSource && (
+                          {isSource ? (
                             <div className="flex items-center justify-between">
                               <span className="text-slate-400 text-[10px]">Limited by Power</span>
                               <label className="relative inline-flex items-center cursor-pointer scale-75">
@@ -949,6 +1001,19 @@ function App() {
                                 />
                                 <div className="w-8 h-4.5 bg-slate-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-white peer-checked:after:bg-slate-900"></div>
                               </label>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col space-y-1" onClick={(e) => e.stopPropagation()}>
+                              <span className="text-slate-400 text-[10px]">Control Mode</span>
+                              <select
+                                value={loop.sinkControlMode || 'unrestricted'}
+                                onChange={(e) => updateLoopParam(loop.id, 'sinkControlMode', e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 font-mono text-[10px] text-white focus:outline-none focus:border-slate-700"
+                              >
+                                <option value="unrestricted" className="bg-slate-900">Power unrestricted</option>
+                                <option value="returnTempLimited" className="bg-slate-900">Return temp limited</option>
+                                <option value="controlledFlow" className="bg-slate-900">Controlled Flow</option>
+                              </select>
                             </div>
                           )}
 
@@ -1135,6 +1200,76 @@ function App() {
                   onChange={(e) => setFlowDurationFactor(Number(e.target.value))}
                   className="w-18 bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700 hover:border-slate-800"
                 />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Override Buoyancy</span>
+                <label className="relative inline-flex items-center cursor-pointer scale-75">
+                  <input
+                    type="checkbox"
+                    checked={params.overrideBuoyancy}
+                    onChange={(e) => setParams(prev => ({ ...prev, overrideBuoyancy: e.target.checked }))}
+                    className="sr-only peer"
+                  />
+                  <div className="w-8 h-4.5 bg-slate-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-white peer-checked:after:bg-slate-900"></div>
+                </label>
+              </div>
+
+              {params.overrideBuoyancy ? (
+                <div>
+                  <div className="flex justify-between text-slate-400 mb-1 text-[10px]">
+                    <span>Manual Buoyancy Effectiveness</span>
+                    <span className="font-mono text-slate-200">{(params.buoyancyOverrideValue * 100).toFixed(0)}%</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="1" 
+                    step="0.01"
+                    value={params.buoyancyOverrideValue} 
+                    onChange={(e) => setParams(prev => ({ ...prev, buoyancyOverrideValue: Number(e.target.value) }))}
+                    className="w-full h-1 bg-slate-855 rounded appearance-none cursor-pointer accent-white"
+                  />
+                </div>
+              ) : (
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <div className="flex items-center space-x-1">
+                    <span>Short-Circuit Ri Limit</span>
+                    <input 
+                      type="number"
+                      min="0.1"
+                      value={params.riMin} 
+                      onChange={(e) => setParams(prev => ({ ...prev, riMin: Number(e.target.value) }))}
+                      className="w-14 bg-slate-950 border border-slate-850 rounded px-1 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700 hover:border-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <span>Stratified Ri Limit</span>
+                    <input 
+                      type="number"
+                      min="1.0"
+                      value={params.riMax} 
+                      onChange={(e) => setParams(prev => ({ ...prev, riMax: Number(e.target.value) }))}
+                      className="w-14 bg-slate-950 border border-slate-850 rounded px-1 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700 hover:border-slate-800"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Richardson Number and Buoyancy display */}
+              <div className="border-t border-slate-800/80 pt-3 mt-3 flex items-center justify-between text-xs">
+                <div className="flex flex-col">
+                  <span className="text-slate-500 font-medium">Richardson Number (Ri)</span>
+                  <span className="font-mono text-slate-300 font-semibold mt-0.5">
+                    {displayRi === Infinity ? '∞' : displayRi.toFixed(1)}
+                  </span>
+                </div>
+                <div className="flex flex-col items-end">
+                  <span className="text-slate-500 font-medium">Buoyancy Effectiveness</span>
+                  <span className="font-mono text-slate-300 font-semibold mt-0.5">
+                    {(displayEta * 100).toFixed(0)}%
+                  </span>
+                </div>
               </div>
             </div>
           </div>
