@@ -30,7 +30,7 @@ export interface FluidLoop {
 }
 
 export interface SimulationParams {
-  tankVolume: number; // Liters
+  tankVolume: number; // m³
   tankHeight: number; // Meters
   ambientTemp: number; // °C
   heatLossCoef: number; // W/m²K
@@ -247,7 +247,7 @@ export const simulateStep = (
   const N = params.numNodes;
   const T = [...state.temperatures];
   
-  const V_tank = params.tankVolume / 1000; // m³
+  const V_tank = params.tankVolume; // m³
   const V_node = V_tank / N; // m³ per node
 
   // Update loop shutdown states (hysteresis) based on current temperatures
@@ -297,7 +297,7 @@ export const simulateStep = (
   const g_gravity = 9.81;
   const beta_thermal = 0.0006;
   const H_tank = params.tankHeight;
-  const A_tank = (params.tankVolume / 1000) / H_tank;
+  const A_tank = params.tankVolume / H_tank;
 
   // Find maximum active loop flow rate in m3/s (using updated nextLoops!)
   let maxFlow_m3s = 0;
