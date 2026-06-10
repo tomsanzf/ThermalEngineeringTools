@@ -44,28 +44,17 @@
 
     <!-- Card Grid -->
     <main class="tools-grid">
-      
       <!-- Card 1: Heat Pump Visualizer -->
       <div class="tool-card hover-glow" data-color="orange">
         <div class="card-glow"></div>
+        <div class="tool-image-container">
+          <img src="images/heat_pump_schematic.png" alt="Heat Pump Cycle Schematic" class="tool-image" />
+        </div>
         <div class="card-content">
-          <div class="card-icon icon-orange">
-            <!-- Heat pump cycle graphic symbol -->
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-            </svg>
-          </div>
-          <span class="category-badge orange-badge">Simulation</span>
           <h2 class="tool-title">Heat Pump Visualizer</h2>
           <p class="tool-desc">
             An interactive system visualizer coupled with a live heat pump simulator. View loop flows, pressures, and control feedback variables.
           </p>
-          <div class="capabilities">
-            <span class="cap-tag">React</span>
-            <span class="cap-tag">Vite</span>
-            <span class="cap-tag">Tailwind</span>
-            <span class="cap-tag">Recharts</span>
-          </div>
           <a href="heat-pump-visualizer/dist/index.html" class="launch-btn btn-orange">Launch Visualizer</a>
         </div>
       </div>
@@ -73,25 +62,14 @@
       <!-- Card 2: P-H Diagram HP -->
       <div class="tool-card hover-glow" data-color="pink">
         <div class="card-glow"></div>
+        <div class="tool-image-container">
+          <img src="images/ph_diagram_schematic.png" alt="p-h Diagram Schematic" class="tool-image" />
+        </div>
         <div class="card-content">
-          <div class="card-icon icon-pink">
-            <!-- Pressure-enthalpy curve symbol -->
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 3v18h18M3 18c6-3 10-9 18-9"></path>
-              <circle cx="13" cy="12" r="2" fill="currentColor"></circle>
-            </svg>
-          </div>
-          <span class="category-badge pink-badge">Thermodynamics</span>
           <h2 class="tool-title">p-h Diagram Studio</h2>
           <p class="tool-desc">
             Visualize heat pump states directly on a Pressure-Enthalpy diagram. Dynamic coefficient of performance (COP) and thermodynamic state tracking.
           </p>
-          <div class="capabilities">
-            <span class="cap-tag">React</span>
-            <span class="cap-tag">Thermodynamics</span>
-            <span class="cap-tag">Charts</span>
-            <span class="cap-tag">Vite</span>
-          </div>
           <a href="p-h-diagram-hp/dist/index.html" class="launch-btn btn-pink">Open p-h Diagram</a>
         </div>
       </div>
@@ -99,26 +77,14 @@
       <!-- Card 3: PFD Overlay Studio -->
       <div class="tool-card hover-glow" data-color="cyan">
         <div class="card-glow"></div>
+        <div class="tool-image-container">
+          <img src="images/pfd_overlay_schematic.png" alt="PFD Overlay Schematic" class="tool-image" />
+        </div>
         <div class="card-content">
-          <div class="card-icon icon-cyan">
-            <!-- Flow diagram symbol -->
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="7" height="9" rx="1"></rect>
-              <rect x="14" y="12" width="7" height="9" rx="1"></rect>
-              <path d="M10 8h4v4"></path>
-            </svg>
-          </div>
-          <span class="category-badge cyan-badge">Process Design</span>
           <h2 class="tool-title">PFD Overlay Studio</h2>
           <p class="tool-desc">
             Overlay timeseries simulation data directly onto Process Flow Diagrams. Export animations as MP4 video files using WebCodecs.
           </p>
-          <div class="capabilities">
-            <span class="cap-tag">WebCodecs</span>
-            <span class="cap-tag">PFD SVG</span>
-            <span class="cap-tag">MP4 Export</span>
-            <span class="cap-tag">Overlay</span>
-          </div>
           <a href="pfd-overlay-studio/dist/index.html" class="launch-btn btn-cyan">Open PFD Studio</a>
         </div>
       </div>
@@ -126,24 +92,14 @@
       <!-- Card 4: SankeyLoop -->
       <div class="tool-card hover-glow" data-color="violet">
         <div class="card-glow"></div>
+        <div class="tool-image-container">
+          <img src="images/sankeyloop_schematic.png" alt="Sankey Diagram Schematic" class="tool-image" />
+        </div>
         <div class="card-content">
-          <div class="card-icon icon-violet">
-            <!-- Sankey loops symbol -->
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-            </svg>
-          </div>
-          <span class="category-badge violet-badge">Energy Flow</span>
-          <h2 class="tool-title">SankeyLoop V3</h2>
+          <h2 class="tool-title">SankeyLoop</h2>
           <p class="tool-desc">
             Professional process and energy flow diagramming tool. Model mass/energy loops, perform scenario comparison, and overlay thermal gradients.
           </p>
-          <div class="capabilities">
-            <span class="cap-tag">Sankey Flow</span>
-            <span class="cap-tag">Plotly.js</span>
-            <span class="cap-tag">Scenario Compare</span>
-            <span class="cap-tag">Vite</span>
-          </div>
           <a href="sankeyloop/SankeyLoop-Stable/dist/index.html" class="launch-btn btn-violet">Launch SankeyLoop</a>
         </div>
       </div>
@@ -151,25 +107,14 @@
       <!-- Card 5: Thermal Storage Calculator -->
       <div class="tool-card hover-glow" data-color="orange-red">
         <div class="card-glow"></div>
+        <div class="tool-image-container">
+          <img src="images/thermal_storage_schematic.png" alt="Stratified Tank Schematic" class="tool-image" />
+        </div>
         <div class="card-content">
-          <div class="card-icon icon-orange-red">
-            <!-- Cylinder thermal stratification symbol -->
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="6" y="2" width="12" height="20" rx="3"></rect>
-              <path d="M6 8h12M6 14h12"></path>
-            </svg>
-          </div>
-          <span class="category-badge orange-red-badge">Energy Storage</span>
           <h2 class="tool-title">Thermal Storage Calc</h2>
           <p class="tool-desc">
             Simulate a stratified thermal storage water tank. Drag supply and return connections up and down the tank height and track temperature gradients.
           </p>
-          <div class="capabilities">
-            <span class="cap-tag">1D Finite Volume</span>
-            <span class="cap-tag">Buoyancy Mixing</span>
-            <span class="cap-tag">Draggable Ports</span>
-            <span class="cap-tag">React</span>
-          </div>
           <a href="thermal-storage-calculator/dist/index.html" class="launch-btn btn-orange-red">Open Storage Calc</a>
         </div>
       </div>
@@ -177,24 +122,14 @@
       <!-- Card 6: Pinch Analysis Utility Targeter -->
       <div class="tool-card hover-glow" data-color="blue">
         <div class="card-glow"></div>
+        <div class="tool-image-container">
+          <img src="images/pinch_analysis_schematic.png" alt="Pinch Composite Curves Schematic" class="tool-image" />
+        </div>
         <div class="card-content">
-          <div class="card-icon icon-blue">
-            <!-- Crossed curves pinch symbol -->
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m18 8-4 4 4 4M6 8l4 4-4 4M2 12h20"></path>
-            </svg>
-          </div>
-          <span class="category-badge blue-badge">Optimization</span>
           <h2 class="tool-title">Pinch Utility Targeter</h2>
           <p class="tool-desc">
             Input process streams to calculate utility heat loads, interval cascades, and locate pinch temperatures. Plots composite & grand composite curves.
           </p>
-          <div class="capabilities">
-            <span class="cap-tag">Pinch Cascade</span>
-            <span class="cap-tag">Composite Curves</span>
-            <span class="cap-tag">Utility Target</span>
-            <span class="cap-tag">Interactive</span>
-          </div>
           <a href="pinch-analysis/dist/index.html" class="launch-btn btn-blue">Open Pinch Tool</a>
         </div>
       </div>

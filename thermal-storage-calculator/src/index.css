@@ -6,7 +6,17 @@
   }
 }
 
-/* Custom CSS to handle SVG dash animation fallback */
-svg path {
-  stroke-dasharray: 8 6;
+/* Fix dotted/dashed icons (Lucide icons, trash icon, chevrons, etc.) by resetting
+   SVG shapes to solid strokes by default. This overrides any rogue global styles
+   or caching issues while preserving our animated pipeline lines and chart grids. */
+svg path:not([stroke-dasharray]),
+svg line:not([stroke-dasharray]),
+svg circle:not([stroke-dasharray]),
+svg rect:not([stroke-dasharray]),
+svg polygon:not([stroke-dasharray]),
+svg polyline:not([stroke-dasharray]) {
+  stroke-dasharray: none !important;
 }
+
+
+

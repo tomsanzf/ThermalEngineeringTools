@@ -17,7 +17,9 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronDown,
-  Trash2
+  Trash2,
+  Download,
+  Upload
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -26,6 +28,7 @@ import {
   YAxis, 
   CartesianGrid, 
   Tooltip, 
+  Legend,
   ResponsiveContainer 
 } from 'recharts';
 import { 
@@ -95,6 +98,7 @@ function App() {
   const [flowDurationFactor, setFlowDurationFactor] = useState<number>(15.0);
   const [dragPortId, setDragPortId] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState<number>(0); // in simulated minutes
+  const [tempHistory, setTempHistory] = useState<any[]>([]); // temperature history over time
   const [showHelp, setShowHelp] = useState<boolean>(false);
 
   // Collapsible physical parameters side panel
@@ -103,6 +107,46 @@ function App() {
   // Responsive canvas width observer
   const containerRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState<number>(1050);
+
+  // Record temperature history over time at 5 height levels
+  useEffect(() => {
+    if (elapsedTime === 0) {
+      setTempHistory([]);
+      return;
+    }
+
+    setTempHistory((prev) => {
+      const maxPoints = 500;
+      const lastPoint = prev[prev.length - 1];
+      const timeInterval = 0.1; // simulated minutes (every 6 seconds)
+
+      if (lastPoint && (elapsedTime - lastPoint.time) < timeInterval) {
+        return prev;
+      }
+
+      const botIdx = 0;
+      const t25Idx = Math.round((NUM_NODES - 1) * 0.25);
+      const t50Idx = Math.round((NUM_NODES - 1) * 0.50);
+      const t75Idx = Math.round((NUM_NODES - 1) * 0.75);
+      const topIdx = NUM_NODES - 1;
+
+      const newPoint = {
+        time: elapsedTime,
+        timeLabel: `${Math.floor(elapsedTime)}m ${Math.floor((elapsedTime % 1) * 60)}s`,
+        'Bottom (0%)': Math.round(state.temperatures[botIdx] * 10) / 10,
+        '25% Height': Math.round(state.temperatures[t25Idx] * 10) / 10,
+        '50% Height': Math.round(state.temperatures[t50Idx] * 10) / 10,
+        '75% Height': Math.round(state.temperatures[t75Idx] * 10) / 10,
+        'Top (100%)': Math.round(state.temperatures[topIdx] * 10) / 10,
+      };
+
+      const nextHist = [...prev, newPoint];
+      if (nextHist.length > maxPoints) {
+        return nextHist.slice(nextHist.length - maxPoints);
+      }
+      return nextHist;
+    });
+  }, [elapsedTime, state.temperatures, NUM_NODES]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -240,6 +284,61 @@ function App() {
   const handleReset = () => {
     setState(createInitialState(NUM_NODES));
     setElapsedTime(0);
+    setTempHistory([]);
+  };
+
+  // Save current configuration to JSON file
+  const handleSaveConfig = () => {
+    const configData = {
+      state,
+      params,
+      sourceOrder,
+      sinkOrder,
+      expandedBoxes,
+      elapsedTime,
+      tempHistory
+    };
+    const blob = new Blob([JSON.stringify(configData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `stratified-tank-config-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Load configuration from JSON file
+  const handleLoadConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.state && data.params && data.sourceOrder && data.sinkOrder) {
+          setState(data.state);
+          setParams(data.params);
+          setSourceOrder(data.sourceOrder);
+          setSinkOrder(data.sinkOrder);
+          if (data.expandedBoxes) setExpandedBoxes(data.expandedBoxes);
+          if (typeof data.elapsedTime === 'number') setElapsedTime(data.elapsedTime);
+          if (Array.isArray(data.tempHistory)) {
+            setTempHistory(data.tempHistory);
+          } else {
+            setTempHistory([]);
+          }
+        } else {
+          alert("Invalid configuration file format. Missing required fields.");
+        }
+      } catch (err) {
+        alert("Error parsing configuration file. Please ensure it is a valid JSON file.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   // Drag-and-drop port connections
@@ -600,52 +699,81 @@ function App() {
           </div>
         </div>
 
-        {/* Sim Controls */}
-        <div className="flex items-center space-x-3 bg-slate-950 border border-slate-800 rounded-xl p-1.5 shadow-inner">
-          <button
-            onClick={() => setSimSpeed(simSpeed === 0 ? 5 : 0)}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition duration-200 ${
-              simSpeed > 0 
-                ? 'bg-amber-500 text-slate-950 hover:bg-amber-400' 
-                : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
-            }`}
-          >
-            {simSpeed > 0 ? (
-              <>
-                <Pause className="w-4 h-4" />
-                <span>Pause</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4" />
-                <span>Run</span>
-              </>
-            )}
-          </button>
-          
-          <button
-            onClick={handleReset}
-            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition duration-200"
-            title="Reset Simulation"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-
-          <div className="h-6 w-px bg-slate-800 my-auto"></div>
-
-          <div className="flex items-center space-x-2 px-2 text-xs">
-            <span className="text-slate-500">Speed:</span>
-            <select
-              value={simSpeed}
-              onChange={(e) => setSimSpeed(Number(e.target.value))}
-              className="bg-transparent text-slate-300 font-semibold focus:outline-none border-none cursor-pointer"
+        {/* Sim Controls Group */}
+        <div className="flex items-center space-x-3">
+          {/* Config Export/Import */}
+          <div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl p-1.5 shadow-inner">
+            <button
+              onClick={handleSaveConfig}
+              className="flex items-center space-x-1 px-2.5 py-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs font-semibold transition cursor-pointer"
+              title="Export complete simulation configuration to JSON"
             >
-              <option value={0} className="bg-slate-900">Paused</option>
-              <option value={1} className="bg-slate-900">1x (Realtime)</option>
-              <option value={5} className="bg-slate-900">5x</option>
-              <option value={15} className="bg-slate-900">15x</option>
-              <option value={30} className="bg-slate-900">30x</option>
-            </select>
+              <Upload className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Export</span>
+            </button>
+            <div className="h-5 w-px bg-slate-800 my-auto mx-1"></div>
+            <label
+              className="flex items-center space-x-1 px-2.5 py-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs font-semibold transition cursor-pointer"
+              title="Import saved simulation configuration from JSON"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Import</span>
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleLoadConfig}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {/* Sim Controls */}
+          <div className="flex items-center space-x-3 bg-slate-950 border border-slate-800 rounded-xl p-1.5 shadow-inner">
+            <button
+              onClick={() => setSimSpeed(simSpeed === 0 ? 5 : 0)}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition duration-200 ${
+                simSpeed > 0 
+                  ? 'bg-amber-500 text-slate-950 hover:bg-amber-400' 
+                  : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+              }`}
+            >
+              {simSpeed > 0 ? (
+                <>
+                  <Pause className="w-4 h-4" />
+                  <span>Pause</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  <span>Run</span>
+                </>
+              )}
+            </button>
+            
+            <button
+              onClick={handleReset}
+              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition duration-200"
+              title="Reset Simulation"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+
+            <div className="h-6 w-px bg-slate-800 my-auto"></div>
+
+            <div className="flex items-center space-x-2 px-2 text-xs">
+              <span className="text-slate-500">Speed:</span>
+              <select
+                value={simSpeed}
+                onChange={(e) => setSimSpeed(Number(e.target.value))}
+                className="bg-transparent text-slate-300 font-semibold focus:outline-none border-none cursor-pointer"
+              >
+                <option value={0} className="bg-slate-900">Paused</option>
+                <option value={1} className="bg-slate-900">1x (Realtime)</option>
+                <option value={5} className="bg-slate-900">5x</option>
+                <option value={15} className="bg-slate-900">15x</option>
+                <option value={30} className="bg-slate-900">30x</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -960,6 +1088,7 @@ function App() {
                             stroke={loop.color}
                             strokeWidth="2.5"
                             opacity="0.75"
+                            strokeDasharray="8 6"
                             markerEnd={`url(#arrow-${loop.id})`}
                             className={animDuration > 0 ? "animate-[dash_10s_linear_infinite]" : ""}
                             style={animDuration > 0 ? { 
@@ -973,6 +1102,7 @@ function App() {
                             stroke={loop.color}
                             strokeWidth="2.5"
                             opacity="0.75"
+                            strokeDasharray="8 6"
                             markerEnd={`url(#arrow-${loop.id})`}
                             className={animDuration > 0 ? "animate-[dash_10s_linear_infinite]" : ""}
                             style={animDuration > 0 ? { 
@@ -1768,46 +1898,83 @@ function App() {
             <div className="w-full max-w-[1300px] mx-auto mt-2 flex-shrink-0">
               <div className="bg-slate-950 border border-slate-900/80 rounded-2xl p-5 flex flex-col h-[320px] shadow-sm">
                 <h3 className="font-semibold text-sm text-slate-300 mb-3 flex items-center justify-between">
-                  <span>Temperature Profile (z-profile)</span>
-                  <span className="font-mono text-[10px] text-slate-500 font-normal">Height vs Temp</span>
+                  <span>Temperature History (Time-series)</span>
+                  <span className="font-mono text-[10px] text-slate-500 font-normal">5 heights over time</span>
                 </h3>
                 
                 <div className="flex-1 w-full relative min-h-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
-                      layout="vertical"
-                      data={chartData}
+                      data={tempHistory}
                       margin={{ top: 5, right: 15, left: -20, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                       <XAxis 
-                        type="number" 
+                        dataKey="time"
+                        type="number"
+                        domain={['auto', 'auto']}
+                        tickFormatter={(v) => `${v.toFixed(1)}m`}
+                        tick={{ fill: '#64748b', fontSize: 10 }}
+                        stroke="#334155"
+                      />
+                      <YAxis 
+                        type="number"
                         domain={[10, 90]} 
                         tick={{ fill: '#64748b', fontSize: 10 }}
                         stroke="#334155"
                         unit="°C"
-                      />
-                      <YAxis 
-                        type="number" 
-                        dataKey="Height (%)" 
-                        domain={[0, 100]} 
-                        tick={{ fill: '#64748b', fontSize: 10 }}
-                        stroke="#334155"
-                        unit="%"
+                        width={35}
                       />
                       <Tooltip
                         contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px' }}
-                        labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-                        itemStyle={{ color: '#f8fafc', fontSize: 12 }}
-                        formatter={(value) => [`${value}°C`, 'Temp']}
+                        labelStyle={{ color: '#38bdf8', fontSize: 11 }}
+                        labelFormatter={(v) => `Time: ${Number(v).toFixed(2)} min`}
+                        itemStyle={{ fontSize: 12 }}
+                      />
+                      <Legend 
+                        wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }}
+                        verticalAlign="bottom"
+                        height={36}
                       />
                       <Line 
                         type="monotone" 
-                        dataKey="Temperature (°C)" 
-                        stroke="#f97316" 
-                        strokeWidth={2.5}
+                        dataKey="Top (100%)" 
+                        stroke="#ef4444" 
+                        strokeWidth={2}
                         dot={false}
-                        activeDot={{ r: 4 }}
+                        isAnimationActive={false}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="75% Height" 
+                        stroke="#f97316" 
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="50% Height" 
+                        stroke="#eab308" 
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="25% Height" 
+                        stroke="#06b6d4" 
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="Bottom (0%)" 
+                        stroke="#3b82f6" 
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
                       />
                     </LineChart>
                   </ResponsiveContainer>
