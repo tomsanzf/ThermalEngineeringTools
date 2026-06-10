@@ -94,6 +94,16 @@ function App() {
   const [draggedBox, setDraggedBox] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   
+  const getBoxHeight = (loopId: string, isExpanded: boolean) => {
+    if (!isExpanded) return 85;
+    if (loopId === 'hp') {
+      const hp = state.loops.find(l => l.id === 'hp');
+      const hasTurndown = hp && (hp.turndownability ?? 0) > 0;
+      return hasTurndown ? 315 : 270;
+    }
+    return 210;
+  };
+
   const tankRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<number | null>(null);
   
@@ -115,11 +125,14 @@ function App() {
     setState((prev) => {
       // Run multiple sub-steps for stability and speed
       let currentT = [...prev.temperatures];
+      let currentLoops = [...prev.loops];
       const stepsPerFrame = simSpeed; 
       const dt = 1.0; // 1 second per step
       
       for (let i = 0; i < stepsPerFrame; i++) {
-        currentT = simulateStep({ ...prev, temperatures: currentT }, params, dt);
+        const result = simulateStep({ ...prev, temperatures: currentT, loops: currentLoops }, params, dt);
+        currentT = result.temperatures;
+        currentLoops = result.loops;
       }
       
       // Update elapsed time (convert dt * stepsPerFrame seconds to minutes)
@@ -127,7 +140,8 @@ function App() {
 
       return {
         ...prev,
-        temperatures: currentT
+        temperatures: currentT,
+        loops: currentLoops
       };
     });
   }, [simSpeed, params]);
@@ -205,7 +219,7 @@ function App() {
     let newX = e.clientX - dragOffset.x;
     let newY = e.clientY - dragOffset.y;
     
-    const boxH = expandedBoxes[draggedBox] ? 210 : 85;
+    const boxH = getBoxHeight(draggedBox, expandedBoxes[draggedBox]);
     
     // Bounds check to keep within the 1050x580 canvas
     // Box dimensions: width 220px, height varies from 85px to 180px.
@@ -251,7 +265,7 @@ function App() {
   // Modify loop parameters
   const updateLoopParam = (
     loopId: string, 
-    field: 'designPower' | 'designTempSupply' | 'designTempReturn' | 'name' | 'limitedByPower' | 'sinkControlMode', 
+    field: 'designPower' | 'designTempSupply' | 'designTempReturn' | 'name' | 'limitedByPower' | 'sinkControlMode' | 'sourceControlMode' | 'turndownability' | 'triggerOn' | 'sensorLocation', 
     value: any
   ) => {
     setState(prev => ({
@@ -339,7 +353,7 @@ function App() {
       <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center space-x-4">
           <a 
-            href="../index.html" 
+            href="../../index.html" 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -553,7 +567,7 @@ function App() {
 
                     // Return: Tank to Box bottom-right
                     const isExpanded = expandedBoxes[loop.id];
-                    const boxH = isExpanded ? 210 : 85;
+                    const boxH = getBoxHeight(loop.id, isExpanded);
                     const x1_r = tankLeft;
                     const y1_r = returnPortY;
                     const x2_r = box.x + 220;
@@ -571,7 +585,7 @@ function App() {
 
                     // Return: Box bottom-left to Tank
                     const isExpanded = expandedBoxes[loop.id];
-                    const boxH = isExpanded ? 210 : 85;
+                    const boxH = getBoxHeight(loop.id, isExpanded);
                     const x1_r = box.x;
                     const y1_r = box.y + boxH - 25;
                     const x2_r = tankRight;
@@ -633,7 +647,7 @@ function App() {
                 const box = boxPositions[loop.id];
                 const isExpanded = expandedBoxes[loop.id];
                 const isSource = loop.type === 'source';
-                const boxH = isExpanded ? (isSource ? 210 : 180) : 85;
+                const boxH = getBoxHeight(loop.id, isExpanded);
                 const tankLeft = 450;
                 const tankRight = 600;
                 const tankTop = 80;
@@ -881,6 +895,31 @@ function App() {
 
               </div>
 
+              {/* Render sensor location indicator on the tank if HP has turndown enabled */}
+              {(() => {
+                const hpLoop = state.loops.find(l => l.id === 'hp');
+                if (hpLoop && hpLoop.isActive && (hpLoop.turndownability ?? 0) > 0) {
+                  const returnPort = state.ports.find(p => p.id === hpLoop.ports.return);
+                  const supplyPort = state.ports.find(p => p.id === hpLoop.ports.supply);
+                  if (returnPort && supplyPort) {
+                    const sensLoc = hpLoop.sensorLocation !== undefined ? hpLoop.sensorLocation : 50;
+                    const sensorHeight = returnPort.height + (sensLoc / 100) * (supplyPort.height - returnPort.height);
+                    const yPos = 80 + 420 * (1 - sensorHeight);
+                    return (
+                      <div 
+                        style={{ top: `${yPos}px`, left: '450px', width: '150px' }}
+                        className="absolute h-px border-t border-dashed border-amber-400/80 z-20 pointer-events-none"
+                      >
+                        <span className="absolute -left-18 -top-2.5 bg-slate-950/90 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[9px] scale-90 whitespace-nowrap shadow-md">
+                          HP Sensor ({sensLoc}%)
+                        </span>
+                      </div>
+                    );
+                  }
+                }
+                return null;
+              })()}
+
               {/* Draggable Port Handles along Left/Right boundaries of Tank */}
               {state.ports.map((port) => {
                 const isLeft = port.loopId === 'solar' || port.loopId === 'hp';
@@ -913,7 +952,7 @@ function App() {
                 const isExpanded = expandedBoxes[loop.id];
                 const actuals = getLoopActuals(loop, state.temperatures, state.ports);
                 const isSource = loop.type === 'source';
-                const boxH = isExpanded ? 210 : 85;
+                const boxH = getBoxHeight(loop.id, isExpanded);
 
                 return (
                   <div
@@ -939,6 +978,11 @@ function App() {
                           onChange={(e) => updateLoopParam(loop.id, 'name', e.target.value)}
                           className="bg-transparent text-xs font-bold text-white focus:outline-none border-b border-transparent hover:border-slate-800 focus:border-slate-700 min-w-0 py-0.5 cursor-text text-ellipsis"
                         />
+                        {loop.isShutDown && (
+                          <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1 py-0.5 rounded border border-amber-500/20 font-semibold tracking-wide flex-shrink-0 animate-pulse">
+                            Turndown
+                          </span>
+                        )}
                       </div>
                       
                       <div className="flex items-center space-x-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -990,17 +1034,17 @@ function App() {
                           </div>
 
                           {isSource ? (
-                            <div className="flex items-center justify-between">
-                              <span className="text-slate-400 text-[10px]">Limited by Power</span>
-                              <label className="relative inline-flex items-center cursor-pointer scale-75">
-                                <input
-                                  type="checkbox"
-                                  checked={loop.limitedByPower !== false}
-                                  onChange={(e) => updateLoopParam(loop.id, 'limitedByPower', e.target.checked)}
-                                  className="sr-only peer"
-                                />
-                                <div className="w-8 h-4.5 bg-slate-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-white peer-checked:after:bg-slate-900"></div>
-                              </label>
+                            <div className="flex flex-col space-y-1" onClick={(e) => e.stopPropagation()}>
+                              <span className="text-slate-400 text-[10px]">Control Mode</span>
+                              <select
+                                value={loop.sourceControlMode || 'tempLimited'}
+                                onChange={(e) => updateLoopParam(loop.id, 'sourceControlMode', e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 font-mono text-[10px] text-white focus:outline-none focus:border-slate-700"
+                              >
+                                <option value="unrestricted" className="bg-slate-900">Power unrestricted</option>
+                                <option value="tempLimited" className="bg-slate-900">Supply temp limited</option>
+                                <option value="controlledFlow" className="bg-slate-900">Controlled Flow</option>
+                              </select>
                             </div>
                           ) : (
                             <div className="flex flex-col space-y-1" onClick={(e) => e.stopPropagation()}>
@@ -1026,6 +1070,63 @@ function App() {
                               className="w-18 bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
                             />
                           </div>
+
+                          {loop.id === 'hp' && (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="text-slate-400 text-[10px]">Turndownability (%)</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  value={loop.turndownability ?? 0}
+                                  onChange={(e) => {
+                                    const val = Math.min(100, Math.max(0, Number(e.target.value)));
+                                    updateLoopParam(loop.id, 'turndownability', val);
+                                    if ((loop.triggerOn ?? 0) > val) {
+                                      updateLoopParam(loop.id, 'triggerOn', val);
+                                    }
+                                  }}
+                                  className="w-18 bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                />
+                              </div>
+
+                              {(loop.turndownability ?? 0) > 0 && (
+                                <>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-slate-400 text-[10px]">Trigger on (%)</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max={loop.turndownability ?? 0}
+                                      value={loop.triggerOn ?? 0}
+                                      onChange={(e) => {
+                                        const maxVal = loop.turndownability ?? 0;
+                                        const val = Math.min(maxVal, Math.max(0, Number(e.target.value)));
+                                        updateLoopParam(loop.id, 'triggerOn', val);
+                                      }}
+                                      className="w-18 bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                    />
+                                  </div>
+
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-slate-400 text-[10px]">Sensor Location (%)</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="100"
+                                      value={loop.sensorLocation ?? 50}
+                                      onChange={(e) => {
+                                        const val = Math.min(100, Math.max(0, Number(e.target.value)));
+                                        updateLoopParam(loop.id, 'sensorLocation', val);
+                                      }}
+                                      className="w-18 bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
                         </div>
                       ) : null}
 

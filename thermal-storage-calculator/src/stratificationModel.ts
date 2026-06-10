@@ -21,7 +21,12 @@ export interface FluidLoop {
     return: string; // ConnectionPort.id
   };
   limitedByPower?: boolean;
+  sourceControlMode?: 'unrestricted' | 'tempLimited' | 'controlledFlow';
   sinkControlMode?: 'unrestricted' | 'returnTempLimited' | 'controlledFlow';
+  turndownability?: number; // 0 to 100 (%)
+  triggerOn?: number; // 0 to turndownability (%)
+  sensorLocation?: number; // 0 to 100 (%) of height between return and supply
+  isShutDown?: boolean; // Hysteresis state
 }
 
 export interface SimulationParams {
@@ -81,7 +86,7 @@ export const createInitialState = (numNodes: number): TankState => {
       isActive: false, 
       color: '#f59e0b', 
       ports: { supply: 'solar-supply', return: 'solar-return' },
-      limitedByPower: true
+      sourceControlMode: 'tempLimited'
     },
     { 
       id: 'hp', 
@@ -93,7 +98,11 @@ export const createInitialState = (numNodes: number): TankState => {
       isActive: false, 
       color: '#ef4444', 
       ports: { supply: 'hp-supply', return: 'hp-return' },
-      limitedByPower: true
+      sourceControlMode: 'tempLimited',
+      turndownability: 0,
+      triggerOn: 0,
+      sensorLocation: 50,
+      isShutDown: false
     },
     { 
       id: 'heating', 
@@ -146,7 +155,7 @@ export const getLoopActuals = (
 
   const T_draw = temperatures[returnIdx] !== undefined ? temperatures[returnIdx] : 20;
 
-  if (!loop.isActive) {
+  if (!loop.isActive || loop.isShutDown) {
     return {
       flowRate: 0,
       tempIn: T_draw,
@@ -163,13 +172,29 @@ export const getLoopActuals = (
   let actualFlowRate = flowRate;
 
   if (loop.type === 'source') {
-    let actualDeltaT = Math.max(0, loop.designTempSupply - T_draw);
-    if (loop.limitedByPower !== false) {
+    const mode = loop.sourceControlMode || (loop.limitedByPower !== false ? 'tempLimited' : 'unrestricted');
+    const potentialDeltaT = Math.max(0, loop.designTempSupply - T_draw);
+
+    if (mode === 'controlledFlow') {
+      const potentialPower = flowRate * 1.161111 * potentialDeltaT;
+      if (potentialPower > loop.designPower && potentialDeltaT > 0) {
+        actualFlowRate = loop.designPower / (1.161111 * potentialDeltaT);
+        actualPower = loop.designPower;
+      } else {
+        actualFlowRate = flowRate;
+        actualPower = potentialPower;
+      }
+      tempIn = T_draw + potentialDeltaT;
+    } else if (mode === 'tempLimited') {
       const maxDeltaT = Math.abs(loop.designTempSupply - loop.designTempReturn);
-      actualDeltaT = Math.min(actualDeltaT, maxDeltaT);
+      const actualDeltaT = Math.min(potentialDeltaT, maxDeltaT);
+      actualPower = flowRate * 1.161111 * actualDeltaT;
+      tempIn = T_draw + actualDeltaT;
+    } else {
+      // unrestricted
+      actualPower = flowRate * 1.161111 * potentialDeltaT;
+      tempIn = T_draw + potentialDeltaT;
     }
-    actualPower = flowRate * 1.161111 * actualDeltaT;
-    tempIn = T_draw + actualDeltaT;
   } else {
     const mode = loop.sinkControlMode || 'unrestricted';
     const potentialDeltaT = Math.max(0, T_draw - loop.designTempReturn);
@@ -207,29 +232,77 @@ export const getLoopActuals = (
   };
 };
 
+export interface SimulationResult {
+  temperatures: number[];
+  loops: FluidLoop[];
+}
+
 // Simulation solver step
-// Returns a new list of temperatures after time step dt (in seconds)
+// Returns a new list of temperatures and updated loops after time step dt (in seconds)
 export const simulateStep = (
   state: TankState,
   params: SimulationParams,
   dt: number // in seconds
-): number[] => {
+): SimulationResult => {
   const N = params.numNodes;
   const T = [...state.temperatures];
   
   const V_tank = params.tankVolume / 1000; // m³
   const V_node = V_tank / N; // m³ per node
-  
+
+  // Update loop shutdown states (hysteresis) based on current temperatures
+  const nextLoops = state.loops.map(loop => {
+    if (loop.isActive && loop.turndownability && loop.turndownability > 0) {
+      const returnPort = state.ports.find(p => p.id === loop.ports.return);
+      const supplyPort = state.ports.find(p => p.id === loop.ports.supply);
+      if (returnPort && supplyPort) {
+        const returnIdx = Math.min(N - 1, Math.max(0, Math.floor(returnPort.height * N)));
+        const T_draw = T[returnIdx] !== undefined ? T[returnIdx] : 20;
+
+        const deltaTDesign = Math.abs(loop.designTempSupply - loop.designTempReturn);
+        const T_off = loop.designTempReturn + (loop.turndownability / 100) * deltaTDesign;
+        const triggerVal = loop.triggerOn !== undefined ? loop.triggerOn : 0;
+        const T_on = loop.designTempReturn + (triggerVal / 100) * deltaTDesign;
+
+        const sensLoc = loop.sensorLocation !== undefined ? loop.sensorLocation : 50;
+        const sensorHeight = returnPort.height + (sensLoc / 100) * (supplyPort.height - returnPort.height);
+        const sensorIdx = Math.min(N - 1, Math.max(0, Math.floor(sensorHeight * N)));
+        const T_sensor = T[sensorIdx] !== undefined ? T[sensorIdx] : 20;
+
+        let currentlyShutDown = !!loop.isShutDown;
+        if (currentlyShutDown) {
+          if (T_sensor <= T_on) {
+            currentlyShutDown = false; // Turn ON
+          }
+        } else {
+          if (T_draw > T_off) {
+            currentlyShutDown = true; // Turn OFF
+          }
+        }
+        return {
+          ...loop,
+          isShutDown: currentlyShutDown
+        };
+      }
+    } else if (loop.isShutDown) {
+      return {
+        ...loop,
+        isShutDown: false
+      };
+    }
+    return loop;
+  });
+
   // Richardson Number calculation for buoyancy scaling
   const g_gravity = 9.81;
   const beta_thermal = 0.0006;
   const H_tank = params.tankHeight;
   const A_tank = (params.tankVolume / 1000) / H_tank;
 
-  // Find maximum active loop flow rate in m3/s
+  // Find maximum active loop flow rate in m3/s (using updated nextLoops!)
   let maxFlow_m3s = 0;
-  state.loops.forEach(loop => {
-    if (!loop.isActive) return;
+  nextLoops.forEach(loop => {
+    if (!loop.isActive || loop.isShutDown) return;
     const actuals = getLoopActuals(loop, T, state.ports);
     const flow_m3s = actuals.flowRate / 3600;
     if (flow_m3s > maxFlow_m3s) {
@@ -265,13 +338,13 @@ export const simulateStep = (
     }
   }
 
-  // 1. Calculate nodal source terms (fluid injections and withdrawals)
+  // 1. Calculate nodal source terms (fluid injections and withdrawals, using updated nextLoops!)
   const q_inj = new Array(N).fill(0); // m³/s
   const q_inj_temp = new Array(N).fill(0); // Weighted temp sum for injection
   const q_with = new Array(N).fill(0); // m³/s
 
-  state.loops.forEach(loop => {
-    if (!loop.isActive) return;
+  nextLoops.forEach(loop => {
+    if (!loop.isActive || loop.isShutDown) return;
     
     const actuals = getLoopActuals(loop, T, state.ports);
     if (actuals.flowRate <= 0) return;
@@ -438,5 +511,8 @@ export const simulateStep = (
     nextT[i] = Math.min(100, Math.max(0, nextT[i]));
   }
 
-  return nextT;
+  return {
+    temperatures: nextT,
+    loops: nextLoops
+  };
 };

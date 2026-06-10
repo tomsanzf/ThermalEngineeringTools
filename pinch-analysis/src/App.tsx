@@ -196,7 +196,7 @@ function App() {
       <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center space-x-4">
           <a 
-            href="../index.html" 
+            href="../../index.html" 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center"
           >
             <ArrowLeft className="w-5 h-5" />

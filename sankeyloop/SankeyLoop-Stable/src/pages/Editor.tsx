@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { Menu, Save, Upload, Download, RotateCcw, Video, Table as TableIcon, FileText, ChevronRight, Sun, Moon, ArrowUp, ArrowDown, HelpCircle } from 'lucide-react';
+import { Menu, Save, Upload, Download, RotateCcw, Video, Table as TableIcon, FileText, ChevronRight, Sun, Moon, GripVertical, HelpCircle } from 'lucide-react';
 import { Config, Scenario, Flow } from '../types';
 import { DEFAULT_FLOWS } from '../constants';
 import { SankeyDiagram } from '../components/SankeyDiagram';
@@ -126,6 +126,8 @@ const INITIAL_SCENARIOS = {
 export default function Editor() {
   const [config, setConfig] = useState<Config>(INITIAL_CONFIG);
   const [scenarios, setScenarios] = useState<Record<string, Scenario>>(INITIAL_SCENARIOS);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragAllowedIndex, setDragAllowedIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('sankeyloop_load_example');
@@ -724,22 +726,31 @@ export default function Editor() {
     updateScenario(editScenario, { flows: newFlows });
   };
 
-  const moveFlowUp = (index: number) => {
-    if (index === 0) return;
-    const newFlows = [...editScenarioData.flows];
-    const temp = newFlows[index];
-    newFlows[index] = newFlows[index - 1];
-    newFlows[index - 1] = temp;
-    updateScenario(editScenario, { flows: newFlows });
+  const handleDragStart = (index: number, e: React.DragEvent) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
   };
 
-  const moveFlowDown = (index: number) => {
-    if (index >= editScenarioData.flows.length - 2) return; // Don't swap with or past the empty trailing row
+  const handleDragOver = (index: number, e: React.DragEvent) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+
+    const lastIndex = editScenarioData.flows.length - 1;
+    if (index === lastIndex || draggedIndex === lastIndex) return;
+
     const newFlows = [...editScenarioData.flows];
-    const temp = newFlows[index];
-    newFlows[index] = newFlows[index + 1];
-    newFlows[index + 1] = temp;
+    const draggedRow = newFlows[draggedIndex];
+    newFlows.splice(draggedIndex, 1);
+    newFlows.splice(index, 0, draggedRow);
+
     updateScenario(editScenario, { flows: newFlows });
+    setDraggedIndex(index);
+    setDragAllowedIndex(index);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDragAllowedIndex(null);
   };
 
   const clearAllFlows = () => {
@@ -1342,7 +1353,17 @@ export default function Editor() {
                         </thead>
                         <tbody>
                           {editScenarioData.flows.map((flow, i) => (
-                            <tr key={i} className="hover:bg-[var(--surface2)] border-b border-[var(--border)] last:border-b-0">
+                            <tr 
+                              key={i} 
+                              draggable={dragAllowedIndex === i}
+                              onDragStart={(e) => handleDragStart(i, e)}
+                              onDragOver={(e) => handleDragOver(i, e)}
+                              onDragEnd={handleDragEnd}
+                              className={cn(
+                                "hover:bg-[var(--surface2)] border-b border-[var(--border)] last:border-b-0 transition-colors duration-150",
+                                draggedIndex === i && "opacity-40 bg-[var(--surface2)] border-dashed border-[var(--accent)]"
+                              )}
+                            >
                               <td className="p-0"><input type="text" value={flow.Source} onPaste={e => handleTablePaste(e, i, 'Source')} onChange={e => handleFlowChange(i, 'Source', e.target.value)} className="w-full border-transparent bg-transparent focus:bg-[var(--surface)] p-1" /></td>
                               <td className="p-0"><input type="text" value={flow.Target} onPaste={e => handleTablePaste(e, i, 'Target')} onChange={e => handleFlowChange(i, 'Target', e.target.value)} className="w-full border-transparent bg-transparent focus:bg-[var(--surface)] p-1" /></td>
                               <td className="p-0"><input type="text" value={flow.Value} onPaste={e => handleTablePaste(e, i, 'Value')} onChange={e => handleFlowChange(i, 'Value', e.target.value)} className="w-full border-transparent bg-transparent focus:bg-[var(--surface)] p-1" /></td>
@@ -1351,20 +1372,25 @@ export default function Editor() {
                                 {(i !== editScenarioData.flows.length - 1 || flow.Source) && (
                                   <>
                                     <button 
-                                      onClick={() => moveFlowUp(i)} 
-                                      disabled={i === 0}
-                                      className={cn("p-0.5 rounded", i === 0 ? "opacity-30 cursor-not-allowed" : "text-[var(--text3)] hover:text-[var(--text2)] hover:bg-[var(--surface3)]")}
+                                      type="button"
+                                      onMouseEnter={() => setDragAllowedIndex(i)}
+                                      onMouseLeave={() => {
+                                        if (draggedIndex === null) {
+                                          setDragAllowedIndex(null);
+                                        }
+                                      }}
+                                      className="p-1 rounded cursor-grab active:cursor-grabbing text-[var(--text3)] hover:text-[var(--text2)] hover:bg-[var(--surface3)] transition-colors flex items-center justify-center"
+                                      title="Drag to reorder"
                                     >
-                                      <ArrowUp size={14} />
+                                      <GripVertical size={14} />
                                     </button>
                                     <button 
-                                      onClick={() => moveFlowDown(i)} 
-                                      disabled={i >= editScenarioData.flows.length - 2}
-                                      className={cn("p-0.5 rounded", i >= editScenarioData.flows.length - 2 ? "opacity-30 cursor-not-allowed" : "text-[var(--text3)] hover:text-[var(--text2)] hover:bg-[var(--surface3)]")}
+                                      onClick={() => deleteFlow(i)} 
+                                      className="text-[var(--text3)] hover:text-[var(--danger)] text-lg px-1 text-center leading-none"
+                                      title="Delete flow"
                                     >
-                                      <ArrowDown size={14} />
+                                      ×
                                     </button>
-                                    <button onClick={() => deleteFlow(i)} className="text-[var(--text3)] hover:text-[var(--danger)] text-lg px-1 text-center leading-none">×</button>
                                   </>
                                 )}
                               </td>
