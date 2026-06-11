@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Play, 
   Pause, 
@@ -56,6 +56,27 @@ const getMidpoint = (x1: number, y1: number, x2: number, y2: number, t: number =
   return { x: mx, y: my };
 };
 
+// Formats simulated elapsed minutes into a human-readable string
+const formatElapsedTime = (minutes: number): string => {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  
+  if (minutes < 60) {
+    const m = Math.floor(minutes);
+    const s = Math.floor((minutes % 1) * 60);
+    return `${pad(m)}m ${pad(s)}s`;
+  } else if (minutes < 1440) {
+    const h = Math.floor(minutes / 60);
+    const m = Math.floor(minutes % 60);
+    const s = Math.floor((minutes % 1) * 60);
+    return `${h}h ${pad(m)}m ${pad(s)}s`;
+  } else {
+    const d = Math.floor(minutes / 1440);
+    const h = Math.floor((minutes % 1440) / 60);
+    const m = Math.floor(minutes % 60);
+    return `${d}d ${pad(h)}h ${pad(m)}m`;
+  }
+};
+
 interface PipelineBadgeItem {
   id: string;
   loopId: string;
@@ -90,16 +111,21 @@ function App() {
     numNodes: NUM_NODES,
     riMin: 100,
     riMax: 500,
-    overrideBuoyancy: false,
-    buoyancyOverrideValue: 0.5
+    overrideBuoyancy: true,
+    buoyancyOverrideValue: 0.1
   });
   
-  const [simSpeed, setSimSpeed] = useState<number>(5); // 0 (paused), 1x, 5x, 10x, 20x
+  const [simSpeed, setSimSpeed] = useState<number>(10); // 0 (paused), 1x, 10x, 100x, 500x
   const [flowDurationFactor, setFlowDurationFactor] = useState<number>(15.0);
   const [dragPortId, setDragPortId] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState<number>(0); // in simulated minutes
+  const [isPaused, setIsPaused] = useState<boolean>(true); // track paused state separately from speed
   const [tempHistory, setTempHistory] = useState<any[]>([]); // temperature history over time
   const [showHelp, setShowHelp] = useState<boolean>(false);
+  const [showChargeExplanation, setShowChargeExplanation] = useState<boolean>(false);
+  const [showNetExplanation, setShowNetExplanation] = useState<boolean>(false);
+  const [hoveredSegIdx, setHoveredSegIdx] = useState<number | null>(null);
+  const [showResetDropdown, setShowResetDropdown] = useState<boolean>(false);
 
   // Collapsible physical parameters side panel
   const [leftPanelOpen, setLeftPanelOpen] = useState<boolean>(true);
@@ -132,7 +158,7 @@ function App() {
 
       const newPoint = {
         time: elapsedTime,
-        timeLabel: `${Math.floor(elapsedTime)}m ${Math.floor((elapsedTime % 1) * 60)}s`,
+        timeLabel: formatElapsedTime(elapsedTime),
         'Bottom (0%)': Math.round(state.temperatures[botIdx] * 10) / 10,
         '25% Height': Math.round(state.temperatures[t25Idx] * 10) / 10,
         '50% Height': Math.round(state.temperatures[t50Idx] * 10) / 10,
@@ -174,8 +200,9 @@ function App() {
 
   const getBoxHeight = (loopId: string, isExpanded: boolean) => {
     if (!isExpanded) return 85;
-    if (loopId === 'hp') {
-      return 280; // HP needs 280px for hysteresis section
+    const loop = state.loops.find(l => l.id === loopId);
+    if (loop && loop.type === 'source') {
+      return 280; // All sources need 280px for hysteresis section when expanded
     }
     return 205; // Expanded height for others to avoid overflow
   };
@@ -224,12 +251,14 @@ function App() {
   const canvasHeight = Math.max(580, sourcesEndY + 60, sinksEndY + 60);
 
   const tankTop = 80;
-  const tankHeight = canvasHeight - tankTop - 80;
+  const tankHeight = canvasHeight - tankTop - 98;
   const tankLeft = Math.round((canvasWidth - 150) / 2);
   const tankRight = tankLeft + 150;
 
   const tankRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<number | null>(null);
+  const lastTimeRef = useRef<number>(performance.now());
+  const accumulatorRef = useRef<number>(0);
   
   // Color mapping function based on temperature
   const getTempColor = (temp: number) => {
@@ -241,22 +270,19 @@ function App() {
   };
 
   // Run simulation step
-  const tick = useCallback(() => {
-    if (simSpeed === 0) return;
-
+  const tick = useCallback((steps: number) => {
     setState((prev) => {
       let currentT = [...prev.temperatures];
       let currentLoops = [...prev.loops];
-      const stepsPerFrame = simSpeed; 
       const dt = 1.0;
       
-      for (let i = 0; i < stepsPerFrame; i++) {
+      for (let i = 0; i < steps; i++) {
         const result = simulateStep({ ...prev, temperatures: currentT, loops: currentLoops }, params, dt);
         currentT = result.temperatures;
         currentLoops = result.loops;
       }
       
-      setElapsedTime(t => t + (dt * stepsPerFrame) / 60);
+      setElapsedTime(t => t + (dt * steps) / 60);
 
       return {
         ...prev,
@@ -264,13 +290,37 @@ function App() {
         loops: currentLoops
       };
     });
-  }, [simSpeed, params]);
+  }, [params]);
 
   // RequestAnimationFrame Loop
   useEffect(() => {
-    if (simSpeed > 0) {
+    if (!isPaused) {
+      lastTimeRef.current = performance.now();
+      accumulatorRef.current = 0;
+
       const loop = () => {
-        tick();
+        const now = performance.now();
+        const elapsedMs = now - lastTimeRef.current;
+        lastTimeRef.current = now;
+
+        const dtReal = elapsedMs / 1000;
+        accumulatorRef.current += dtReal * simSpeed;
+
+        if (accumulatorRef.current > 100.0) {
+          accumulatorRef.current = 100.0;
+        }
+
+        let stepsToRun = 0;
+        const dtSim = 1.0;
+        while (accumulatorRef.current >= dtSim) {
+          stepsToRun++;
+          accumulatorRef.current -= dtSim;
+        }
+
+        if (stepsToRun > 0) {
+          tick(stepsToRun);
+        }
+
         simRef.current = requestAnimationFrame(loop);
       };
       simRef.current = requestAnimationFrame(loop);
@@ -278,11 +328,69 @@ function App() {
     return () => {
       if (simRef.current) cancelAnimationFrame(simRef.current);
     };
-  }, [simSpeed, tick]);
+  }, [isPaused, simSpeed, tick]);
 
-  // Reset simulation
-  const handleReset = () => {
-    setState(createInitialState(NUM_NODES));
+  // Reset simulation with a specific temperature profile
+  const resetProfile = (profileType: 'fullyCharged' | 'maxAchievable' | 'stratified' | 'fullyDrained') => {
+    const activeSources = state.loops.filter(l => l.isActive && l.type === 'source');
+    const activeLoops = state.loops.filter(l => l.isActive);
+
+    const highestSourceTemp = activeSources.length > 0
+      ? Math.max(...activeSources.map(l => l.designTempSupply))
+      : 90;
+
+    const returnTemps = activeLoops.map(l => l.designTempReturn);
+    const coldestReturn = returnTemps.length > 0
+      ? Math.min(...returnTemps)
+      : 20;
+
+    // T_baseline is calculated from activeSinks designTempReturn, or fallback to 20
+    const activeSinks = state.loops.filter(l => l.isActive && l.type === 'sink');
+    const tBaseline = activeSinks.length > 0
+      ? Math.min(...activeSinks.map(l => l.designTempReturn))
+      : 20;
+
+    const newTemps: number[] = [];
+
+    for (let i = 0; i < NUM_NODES; i++) {
+      const fraction = i / (NUM_NODES - 1);
+
+      if (profileType === 'fullyCharged') {
+        newTemps.push(highestSourceTemp);
+      } else if (profileType === 'fullyDrained') {
+        newTemps.push(coldestReturn);
+      } else if (profileType === 'stratified') {
+        newTemps.push(coldestReturn + fraction * (highestSourceTemp - coldestReturn));
+      } else if (profileType === 'maxAchievable') {
+        // Max achievable charge
+        // A node is heatable if it lies at or above the lowest port height of any active source loop
+        const covering = activeSources.filter(loop => {
+          const supplyPort = state.ports.find(p => p.id === loop.ports.supply);
+          const returnPort = state.ports.find(p => p.id === loop.ports.return);
+          if (!supplyPort || !returnPort) return false;
+          const hMin = Math.min(supplyPort.height, returnPort.height);
+          return fraction >= hMin - 1e-5;
+        });
+
+        if (covering.length > 0) {
+          const tMax = Math.max(...covering.map(l => l.designTempSupply));
+          newTemps.push(tMax);
+        } else {
+          newTemps.push(tBaseline);
+        }
+      }
+    }
+
+    setState(prev => ({
+      ...prev,
+      temperatures: newTemps
+    }));
+    setElapsedTime(0);
+    setTempHistory([]);
+  };
+
+  // Reset only the timer and temperature history graph
+  const handleResetTimer = () => {
     setElapsedTime(0);
     setTempHistory([]);
   };
@@ -557,13 +665,14 @@ function App() {
   // -------------------------------------------------------------
   const activeSourcesList = state.loops.filter(l => l.isActive && l.type === 'source');
   const activeSinksList = state.loops.filter(l => l.isActive && l.type === 'sink');
+  const allActiveLoops = state.loops.filter(l => l.isActive);
 
-  const T_high = activeSourcesList.length > 0
-    ? Math.max(...activeSourcesList.map(l => l.designTempSupply))
+  const T_high = allActiveLoops.length > 0
+    ? Math.max(...allActiveLoops.map(l => l.designTempSupply))
     : 90; // default to 90
 
-  const T_low = activeSinksList.length > 0
-    ? Math.min(...activeSinksList.map(l => l.designTempReturn))
+  const T_low = allActiveLoops.length > 0
+    ? Math.min(...allActiveLoops.map(l => l.designTempReturn))
     : 50; // default to 50
 
   const heatCapacityKWh = (params.tankVolume * 4180 * Math.max(0, T_high - T_low)) / 3600;
@@ -655,27 +764,372 @@ function App() {
     }
   });
 
-  const timeToChargeOnly = totalSourcePower > 0 ? (heatCapacityKWh / totalSourcePower) : Infinity;
-  const timeToDischargeOnly = totalSinkPower > 0 ? (heatCapacityKWh / totalSinkPower) : Infinity;
+  // -------------------------------------------------------------
+  // Segmented Thermodynamic Capacity and Charging Time Calculation
+  // -------------------------------------------------------------
+  const T_baseline = allActiveLoops.length > 0
+    ? Math.min(...allActiveLoops.map(l => l.designTempReturn))
+    : 20; // fallback to 20°C cold reference
 
-  const netPower = totalSourcePower - totalSinkPower;
-  const timeToNet = netPower !== 0 ? (heatCapacityKWh / Math.abs(netPower)) : Infinity;
+  // We collect all port heights from active sources
+  const heightsSet = new Set<number>([0, 1]); // always include bottom (0) and top (1)
+  activeSourcesList.forEach(loop => {
+    const supplyPort = state.ports.find(p => p.id === loop.ports.supply);
+    const returnPort = state.ports.find(p => p.id === loop.ports.return);
+    if (supplyPort) heightsSet.add(supplyPort.height);
+    if (returnPort) heightsSet.add(returnPort.height);
+  });
+  const sortedHeights = Array.from(heightsSet).sort((a, b) => a - b);
 
-  let netStatusText = 'Balanced';
-  if (netPower > 0) {
-    netStatusText = 'Charging';
-  } else if (netPower < 0) {
-    netStatusText = 'Discharging';
+  interface Segment {
+    yStart: number;
+    yEnd: number;
+    volume: number; // m³
+    qNeeded: number; // kWh
+    tMax: number; // °C
+    coveringLoops: FluidLoop[];
   }
 
+  const segments: Segment[] = [];
+  for (let i = 0; i < sortedHeights.length - 1; i++) {
+    const yStart = sortedHeights[i];
+    const yEnd = sortedHeights[i + 1];
+    const vol = params.tankVolume * (yEnd - yStart);
+
+    // Find active sources covering this segment
+    const covering = activeSourcesList.filter(loop => {
+      const supplyPort = state.ports.find(p => p.id === loop.ports.supply);
+      const returnPort = state.ports.find(p => p.id === loop.ports.return);
+      if (!supplyPort || !returnPort) return false;
+      const hMin = Math.min(supplyPort.height, returnPort.height);
+      // Buoyancy-driven flow assumption: segments above a heated port are heatable
+      return yStart >= hMin - 1e-5;
+    });
+
+    const tMax = covering.length > 0
+      ? Math.max(...covering.map(l => l.designTempSupply))
+      : T_baseline;
+
+    const qNeeded = tMax > T_baseline
+      ? (vol * 4180 * (tMax - T_baseline)) / 3600
+      : 0;
+
+    segments.push({
+      yStart,
+      yEnd,
+      volume: vol,
+      qNeeded,
+      tMax,
+      coveringLoops: covering
+    });
+  }
+
+  const maxActiveSourceTemp = activeSourcesList.length > 0
+    ? Math.max(...activeSourcesList.map(l => l.designTempSupply))
+    : 0;
+
+  const achievableCapacityKWh = segments.reduce((sum, seg) => sum + seg.qNeeded, 0);
+
+  // Maximum thermodynamic potential capacity if the entire tank was heated to maxActiveSourceTemp from T_baseline
+  const totalMaxCapacityKWh = maxActiveSourceTemp > T_baseline
+    ? (params.tankVolume * 4180 * (maxActiveSourceTemp - T_baseline)) / 3600
+    : 0;
+
+  const achievablePercent = totalMaxCapacityKWh > 0
+    ? Math.min(100, (achievableCapacityKWh / totalMaxCapacityKWh) * 100)
+    : 0;
+
+  // Heights and centers calculations for visual alignment in sizing modal
+  const totalTankHeight = segments.reduce((sum, seg) => sum + Math.max(38, (seg.yEnd - seg.yStart) * 240), 0);
+
+  const boundaries: { heightVal: number; topOffset: number }[] = [];
+  let accumulatedHeight = 0;
+  boundaries.push({ heightVal: 1.0, topOffset: 0 });
+  [...segments].reverse().forEach((seg) => {
+    const height = Math.max(38, (seg.yEnd - seg.yStart) * 240);
+    accumulatedHeight += height;
+    boundaries.push({ heightVal: seg.yStart, topOffset: accumulatedHeight });
+  });
+
+  const segmentCenters: number[] = [];
+  let currentTop = 0;
+  [...segments].reverse().forEach((seg) => {
+    const height = Math.max(38, (seg.yEnd - seg.yStart) * 240);
+    segmentCenters.push(currentTop + height / 2);
+    currentTop += height;
+  });
+
+  // -------------------------------------------------------------
+  // Dry-run Simulation Solver for Charging, Discharging, and Equilibrium
+  // -------------------------------------------------------------
+  const dryRunResults = useMemo(() => {
+    const activeSources = state.loops.filter(l => l.isActive && l.type === 'source');
+    const activeSinks = state.loops.filter(l => l.isActive && l.type === 'sink');
+
+    const hasSources = activeSources.length > 0;
+    const hasSinks = activeSinks.length > 0;
+
+    // Default return baseline
+    const tBaseline = activeSinks.length > 0
+      ? Math.min(...activeSinks.map(l => l.designTempReturn))
+      : 20;
+
+    // Coldest return across all active loops in global state
+    const returnTemps = state.loops.filter(l => l.isActive).map(l => l.designTempReturn);
+    const globalColdestReturn = returnTemps.length > 0 ? Math.min(...returnTemps) : 20;
+
+    // Target temps for sources (max achievable charge)
+    const targetTemps: number[] = [];
+    for (let i = 0; i < NUM_NODES; i++) {
+      const fraction = i / (NUM_NODES - 1);
+      const covering = activeSources.filter(loop => {
+        const supplyPort = state.ports.find(p => p.id === loop.ports.supply);
+        const returnPort = state.ports.find(p => p.id === loop.ports.return);
+        if (!supplyPort || !returnPort) return false;
+        const hMin = Math.min(supplyPort.height, returnPort.height);
+        return fraction >= hMin - 1e-5;
+      });
+
+      if (covering.length > 0) {
+        const tMax = Math.max(...covering.map(l => l.designTempSupply));
+        targetTemps.push(tMax);
+      } else {
+        targetTemps.push(globalColdestReturn);
+      }
+    }
+
+    // 1. Calculate Charging Time (sources active, sinks inactive)
+    // Starts at globalColdestReturn, targets targetTemps
+    let chargeTime = Infinity;
+    if (hasSources) {
+      let currentT = Array(NUM_NODES).fill(globalColdestReturn);
+      let currentLoops = state.loops.map(l => ({ ...l, isActive: l.type === 'source' ? l.isActive : false }));
+      const dt = 15.0;
+      let elapsed = 0;
+      const maxSteps = 2400;
+      let solved = false;
+      for (let step = 0; step < maxSteps; step++) {
+        const isDone = currentT.every((temp, idx) => temp >= targetTemps[idx] - 0.5);
+        if (isDone) {
+          chargeTime = elapsed / 3600;
+          solved = true;
+          break;
+        }
+        const allOff = currentLoops.every(l => {
+          if (!l.isActive || l.isShutDown) return true;
+          return getLoopActuals(l, currentT, state.ports).actualPower < 0.1;
+        });
+        if (allOff) {
+          chargeTime = elapsed / 3600;
+          solved = true;
+          break;
+        }
+        const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
+        currentT = result.temperatures;
+        currentLoops = result.loops;
+        elapsed += dt;
+      }
+      if (!solved) chargeTime = elapsed / 3600;
+    }
+
+    // 2. Calculate Discharging Time (sources inactive, sinks active)
+    // Starts at targetTemps (or T_high if no sources), targets globalColdestReturn
+    let dischargeTime = Infinity;
+    if (hasSinks) {
+      const startTemps = hasSources ? targetTemps : Array(NUM_NODES).fill(T_high);
+      let currentT = [...startTemps];
+      let currentLoops = state.loops.map(l => ({ ...l, isActive: l.type === 'sink' ? l.isActive : false }));
+      const dt = 15.0;
+      let elapsed = 0;
+      const maxSteps = 2400;
+      let solved = false;
+      for (let step = 0; step < maxSteps; step++) {
+        const isDone = currentT.every(temp => temp <= globalColdestReturn + 0.5);
+        if (isDone) {
+          dischargeTime = elapsed / 3600;
+          solved = true;
+          break;
+        }
+        const allOff = currentLoops.every(l => {
+          if (!l.isActive || l.isShutDown) return true;
+          return getLoopActuals(l, currentT, state.ports).actualPower < 0.1;
+        });
+        if (allOff) {
+          dischargeTime = elapsed / 3600;
+          solved = true;
+          break;
+        }
+        const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
+        currentT = result.temperatures;
+        currentLoops = result.loops;
+        elapsed += dt;
+      }
+      if (!solved) dischargeTime = elapsed / 3600;
+    }
+
+    // 3. Find Equilibrium Profile (both active sources and sinks running)
+    let eqProfile = Array(NUM_NODES).fill(globalColdestReturn);
+    if (hasSources || hasSinks) {
+      let currentT = Array(NUM_NODES).fill(globalColdestReturn);
+      let currentLoops = state.loops.map(l => ({ ...l }));
+      const dt = 15.0;
+      const maxSteps = 2400;
+      let prevT = [...currentT];
+      let foundEq = false;
+      for (let step = 0; step < maxSteps; step++) {
+        const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
+        currentT = result.temperatures;
+        currentLoops = result.loops;
+        const maxChange = Math.max(...currentT.map((t, idx) => Math.abs(t - prevT[idx])));
+        if (maxChange < 0.0005 && step > 10) {
+          eqProfile = currentT;
+          foundEq = true;
+          break;
+        }
+        prevT = [...currentT];
+      }
+      if (!foundEq) eqProfile = currentT;
+    }
+
+    // 4. Calculate time to reach equilibrium from fully drained
+    let drainedToEqTime = Infinity;
+    if (hasSources || hasSinks) {
+      let currentT = Array(NUM_NODES).fill(globalColdestReturn);
+      let currentLoops = state.loops.map(l => ({ ...l }));
+      const dt = 15.0;
+      let elapsed = 0;
+      const maxSteps = 2400;
+      let solved = false;
+      for (let step = 0; step < maxSteps; step++) {
+        const isDone = currentT.every((temp, idx) => Math.abs(temp - eqProfile[idx]) < 0.5);
+        if (isDone) {
+          drainedToEqTime = elapsed / 3600;
+          solved = true;
+          break;
+        }
+        const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
+        currentT = result.temperatures;
+        currentLoops = result.loops;
+        elapsed += dt;
+      }
+      if (!solved) drainedToEqTime = elapsed / 3600;
+    }
+
+    // 5. Calculate time to reach equilibrium from fully charged (max achievable)
+    let chargedToEqTime = Infinity;
+    if (hasSources || hasSinks) {
+      const startTemps = hasSources ? targetTemps : Array(NUM_NODES).fill(T_high);
+      let currentT = [...startTemps];
+      let currentLoops = state.loops.map(l => ({ ...l }));
+      const dt = 15.0;
+      let elapsed = 0;
+      const maxSteps = 2400;
+      let solved = false;
+      for (let step = 0; step < maxSteps; step++) {
+        const isDone = currentT.every((temp, idx) => Math.abs(temp - eqProfile[idx]) < 0.5);
+        if (isDone) {
+          chargedToEqTime = elapsed / 3600;
+          solved = true;
+          break;
+        }
+        const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
+        currentT = result.temperatures;
+        currentLoops = result.loops;
+        elapsed += dt;
+      }
+      if (!solved) chargedToEqTime = elapsed / 3600;
+    }
+
+    return {
+      chargeTime,
+      dischargeTime,
+      eqProfile,
+      drainedToEqTime,
+      chargedToEqTime
+    };
+  }, [state.temperatures, state.loops, state.ports, params, T_high]);
+
+  const eqSegments = useMemo(() => {
+    const activeLoops = state.loops.filter(l => l.isActive);
+    const activePorts = state.ports.filter(p => activeLoops.some(l => l.ports.supply === p.id || l.ports.return === p.id));
+    const heights = [0, 1.0, ...activePorts.map(p => p.height)];
+    const uniqueHeights = Array.from(new Set(heights)).sort((a, b) => b - a);
+    
+    const segs: {
+      yStart: number;
+      yEnd: number;
+      volume: number;
+      eqTemp: number;
+      coveringSources: LoopConfig[];
+      coveringSinks: LoopConfig[];
+    }[] = [];
+    
+    for (let i = 0; i < uniqueHeights.length - 1; i++) {
+      const yStart = uniqueHeights[i];
+      const yEnd = uniqueHeights[i + 1];
+      const vol = params.tankVolume * (yStart - yEnd);
+      
+      const coveringSources = activeLoops.filter(l => {
+        if (l.type !== 'source') return false;
+        const supplyPort = state.ports.find(p => p.id === l.ports.supply);
+        const returnPort = state.ports.find(p => p.id === l.ports.return);
+        if (!supplyPort || !returnPort) return false;
+        const hMin = Math.min(supplyPort.height, returnPort.height);
+        return yStart >= hMin - 1e-5;
+      });
+
+      const coveringSinks = activeLoops.filter(l => {
+        if (l.type !== 'sink') return false;
+        const supplyPort = state.ports.find(p => p.id === l.ports.supply);
+        const returnPort = state.ports.find(p => p.id === l.ports.return);
+        if (!supplyPort || !returnPort) return false;
+        const hMin = Math.min(supplyPort.height, returnPort.height);
+        const hMax = Math.max(supplyPort.height, returnPort.height);
+        return yStart <= hMax + 1e-5 && yEnd >= hMin - 1e-5;
+      });
+      
+      const nodeStart = Math.max(0, Math.min(NUM_NODES - 1, Math.round(yEnd * (NUM_NODES - 1))));
+      const nodeEnd = Math.max(0, Math.min(NUM_NODES - 1, Math.round(yStart * (NUM_NODES - 1))));
+      
+      let sumT = 0;
+      let count = 0;
+      for (let n = nodeStart; n <= nodeEnd; n++) {
+        sumT += dryRunResults.eqProfile[n];
+        count++;
+      }
+      const eqTemp = count > 0 ? sumT / count : dryRunResults.eqProfile[nodeStart];
+      
+      segs.push({
+        yStart,
+        yEnd,
+        volume: vol,
+        eqTemp,
+        coveringSources,
+        coveringSinks
+      });
+    }
+    return segs;
+  }, [state.loops, state.ports, params.tankVolume, dryRunResults.eqProfile]);
+
+  const calculatedChargeTimeHours = dryRunResults.chargeTime;
+  const timeToDischargeOnly = dryRunResults.dischargeTime;
+
+  const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink').length;
+  const chargeFromDrainedTime = activeSinksCount > 0 ? dryRunResults.drainedToEqTime : dryRunResults.chargeTime;
+  const dischargeFromMaxTime = activeSinksCount > 0 ? dryRunResults.chargedToEqTime : 0;
+
+
   const formatTime = (hours: number) => {
-    if (!isFinite(hours) || hours <= 0 || heatCapacityKWh <= 0) return '—';
+    if (!isFinite(hours) || hours <= 0) return '—';
     const h = Math.floor(hours);
     const m = Math.round((hours - h) * 60);
     if (h === 0) return `${m} min`;
     if (m === 0) return `${h} h`;
     return `${h} h ${m} min`;
   };
+
+  const minTime = tempHistory.length > 0 ? tempHistory[0].time : 0;
+  const maxTime = tempHistory.length > 0 ? Math.max(minTime + 0.1, tempHistory[tempHistory.length - 1].time) : 1;
 
   return (
     <div className="h-screen bg-slate-950 text-slate-100 font-sans flex flex-col antialiased overflow-hidden">
@@ -728,16 +1182,16 @@ function App() {
           </div>
 
           {/* Sim Controls */}
-          <div className="flex items-center space-x-3 bg-slate-950 border border-slate-800 rounded-xl p-1.5 shadow-inner">
+          <div className="relative flex items-center space-x-3 bg-slate-950 border border-slate-800 rounded-xl p-1.5 shadow-inner">
             <button
-              onClick={() => setSimSpeed(simSpeed === 0 ? 5 : 0)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition duration-200 ${
-                simSpeed > 0 
+              onClick={() => setIsPaused(prev => !prev)}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition duration-200 cursor-pointer ${
+                !isPaused 
                   ? 'bg-amber-500 text-slate-950 hover:bg-amber-400' 
                   : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
               }`}
             >
-              {simSpeed > 0 ? (
+              {!isPaused ? (
                 <>
                   <Pause className="w-4 h-4" />
                   <span>Pause</span>
@@ -751,12 +1205,59 @@ function App() {
             </button>
             
             <button
-              onClick={handleReset}
-              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition duration-200"
-              title="Reset Simulation"
+              onClick={() => setShowResetDropdown(prev => !prev)}
+              className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition duration-200 cursor-pointer"
+              title="Reset Simulation Options"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
+
+            {showResetDropdown && (
+              <>
+                <div 
+                  className="fixed inset-0 z-20 cursor-default" 
+                  onClick={() => setShowResetDropdown(false)} 
+                />
+                <div className="absolute left-[-20px] md:left-auto md:right-0 top-11 w-48 bg-slate-900 border border-slate-800 rounded-lg shadow-xl py-1 z-30 select-none animate-fade-in text-[11px] text-slate-350">
+                  <button
+                    onClick={() => {
+                      resetProfile('fullyCharged');
+                      setShowResetDropdown(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-slate-350 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    Fully charged
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetProfile('maxAchievable');
+                      setShowResetDropdown(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-slate-350 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    Max achievable charge
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetProfile('stratified');
+                      setShowResetDropdown(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-slate-350 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    Linearly stratified
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetProfile('fullyDrained');
+                      setShowResetDropdown(false);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-slate-350 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    Fully drained
+                  </button>
+                </div>
+              </>
+            )}
 
             <div className="h-6 w-px bg-slate-800 my-auto"></div>
 
@@ -767,11 +1268,10 @@ function App() {
                 onChange={(e) => setSimSpeed(Number(e.target.value))}
                 className="bg-transparent text-slate-300 font-semibold focus:outline-none border-none cursor-pointer"
               >
-                <option value={0} className="bg-slate-900">Paused</option>
                 <option value={1} className="bg-slate-900">1x (Realtime)</option>
-                <option value={5} className="bg-slate-900">5x</option>
-                <option value={15} className="bg-slate-900">15x</option>
-                <option value={30} className="bg-slate-900">30x</option>
+                <option value={10} className="bg-slate-900">10x</option>
+                <option value={100} className="bg-slate-900">100x</option>
+                <option value={500} className="bg-slate-900">500x</option>
               </select>
             </div>
           </div>
@@ -779,11 +1279,20 @@ function App() {
 
         {/* Stats */}
         <div className="flex items-center space-x-6 text-sm">
-          <div className="text-right hidden sm:block">
-            <div className="text-xs text-slate-500 font-medium">Elapsed Time</div>
-            <div className="font-mono text-slate-200 font-semibold">
-              {Math.floor(elapsedTime)}m {Math.floor((elapsedTime % 1) * 60)}s
+          <div className="flex items-center space-x-3 hidden sm:flex">
+            <div className="text-right">
+              <div className="text-xs text-slate-500 font-medium">Elapsed Time</div>
+              <div className="font-mono text-slate-200 font-semibold">
+                {formatElapsedTime(elapsedTime)}
+              </div>
             </div>
+            <button 
+              onClick={handleResetTimer}
+              className="p-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-red-400 rounded-lg transition duration-200 cursor-pointer flex items-center justify-center"
+              title="Reset Timer & Temp History Graph"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
           </div>
           <button 
             onClick={() => setShowHelp(!showHelp)}
@@ -1093,7 +1602,7 @@ function App() {
                             className={animDuration > 0 ? "animate-[dash_10s_linear_infinite]" : ""}
                             style={animDuration > 0 ? { 
                               animationDuration: `${animDuration}s`,
-                              animationPlayState: simSpeed === 0 ? 'paused' : 'running'
+                              animationPlayState: isPaused ? 'paused' : 'running'
                             } : {}}
                           />
                           <path
@@ -1107,7 +1616,7 @@ function App() {
                             className={animDuration > 0 ? "animate-[dash_10s_linear_infinite]" : ""}
                             style={animDuration > 0 ? { 
                               animationDuration: `${animDuration}s`,
-                              animationPlayState: simSpeed === 0 ? 'paused' : 'running'
+                              animationPlayState: isPaused ? 'paused' : 'running'
                             } : {}}
                           />
                         </g>
@@ -1466,7 +1975,7 @@ function App() {
                                     className={dur > 0 ? "animate-[dash_10s_linear_infinite]" : ""}
                                     style={dur > 0 ? { 
                                       animationDuration: `${dur}s`,
-                                      animationPlayState: simSpeed === 0 ? 'paused' : 'running'
+                                      animationPlayState: isPaused ? 'paused' : 'running'
                                     } : {}}
                                   />
                                 );
@@ -1524,29 +2033,30 @@ function App() {
 
                   </div>
 
-                  {(() => {
-                    const hpLoop = state.loops.find(l => l.id === 'hp');
-                    if (hpLoop && hpLoop.isActive && (hpLoop.turndownability ?? 0) > 0) {
-                      const returnPort = state.ports.find(p => p.id === hpLoop.ports.return);
-                      const supplyPort = state.ports.find(p => p.id === hpLoop.ports.supply);
+                  {state.loops.map(loop => {
+                    if (loop.isActive && loop.type === 'source' && (loop.turndownability ?? 0) > 0) {
+                      const returnPort = state.ports.find(p => p.id === loop.ports.return);
+                      const supplyPort = state.ports.find(p => p.id === loop.ports.supply);
                       if (returnPort && supplyPort) {
-                        const sensLoc = hpLoop.sensorLocation !== undefined ? hpLoop.sensorLocation : 50;
+                        const sensLoc = loop.sensorLocation !== undefined ? loop.sensorLocation : 50;
                         const sensorHeight = returnPort.height + (sensLoc / 100) * (supplyPort.height - returnPort.height);
                         const yPos = tankTop + tankHeight * (1 - sensorHeight);
+                        const cleanName = loop.name.length > 12 ? loop.name.substring(0, 10) + '..' : loop.name;
                         return (
                           <div 
+                            key={`sensor-line-${loop.id}`}
                             style={{ top: `${yPos}px`, left: `${tankLeft}px`, width: '150px' }}
                             className="absolute h-px border-t border-dashed border-amber-400/80 z-20 pointer-events-none"
                           >
-                            <span className="absolute -left-18 -top-2.5 bg-slate-950/90 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[9px] scale-90 whitespace-nowrap shadow-md">
-                              HP Sensor ({sensLoc}%)
+                            <span className="absolute -left-24 -top-2.5 bg-slate-950/90 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[9px] scale-90 whitespace-nowrap shadow-md">
+                              {cleanName} Sensor ({sensLoc}%)
                             </span>
                           </div>
                         );
                       }
                     }
                     return null;
-                  })()}
+                  })}
 
                   {state.ports.map((port) => {
                     const loop = state.loops.find(l => l.id === port.loopId);
@@ -1702,7 +2212,7 @@ function App() {
                                       >
                                         <option value="unrestricted">Unrestricted</option>
                                         <option value="tempLimited">Temp Limited</option>
-                                        <option value="controlledFlow">Controlled</option>
+                                        <option value="controlledFlow">Flow controlled</option>
                                       </select>
                                     </div>
                                   </div>
@@ -1756,7 +2266,7 @@ function App() {
                                 </>
                               )}
 
-                              {loop.id === 'hp' && (
+                              {loop.type === 'source' && (
                                 <div className="border-t border-slate-800/80 pt-2.5 mt-1">
                                   <span className="text-slate-350 font-semibold text-[10px] block mb-2">Hysteresis Controls</span>
                                   
@@ -1826,8 +2336,8 @@ function App() {
                     );
                   })}
 
-                  <div
-                    style={{ left: `${tankLeft - 50}px`, top: `${canvasHeight - 65}px`, width: '250px' }}
+                  <div 
+                    style={{ left: `${tankLeft - 50}px`, top: `${canvasHeight - 88}px`, width: '250px' }}
                     className="absolute bg-slate-900/60 border border-slate-800/50 p-2 rounded-xl flex flex-col space-y-1 select-none backdrop-blur-sm z-20"
                     onClick={(e) => e.stopPropagation()}
                   >
@@ -1847,16 +2357,26 @@ function App() {
                   </div>
 
                   <div 
-                    style={{ left: `${tankLeft - 145}px`, top: `${canvasHeight - 65}px`, width: '85px' }}
+                    style={{ left: `${tankLeft - 180}px`, top: `${canvasHeight - 88}px`, width: '120px' }}
                     className="absolute bg-slate-900/60 border border-slate-800/50 p-2 rounded-xl flex flex-col justify-center select-none backdrop-blur-sm z-20 text-center"
                   >
-                    <span className="text-[8px] text-slate-400 font-semibold uppercase tracking-wide">Charge Time</span>
-                    <span className="font-mono text-[11px] text-emerald-400 font-bold mt-0.5">{formatTime(timeToChargeOnly)}</span>
-                    <span className="text-[8px] text-slate-500 mt-0.5">{totalSourcePower} kW</span>
+                    <div className="flex items-center justify-center text-slate-400 text-[8px] font-semibold uppercase tracking-wide">
+                      <span>Charge Time</span>
+                      <button
+                        onClick={() => setShowChargeExplanation(true)}
+                        className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700"
+                        title="Explain segmented charging calculations"
+                      >
+                        ?
+                      </button>
+                    </div>
+                    <span className="font-mono text-[11px] text-emerald-400 font-bold mt-0.5">{formatTime(calculatedChargeTimeHours)}</span>
+                    <span className="text-[7.5px] text-slate-400 mt-0.5">Up to {achievableCapacityKWh.toFixed(1)} kWh</span>
+                    <span className="text-[7.5px] text-slate-500 font-medium">({achievablePercent.toFixed(0)}% of max cap)</span>
                   </div>
 
                   <div 
-                    style={{ left: `${tankRight + 60}px`, top: `${canvasHeight - 65}px`, width: '85px' }}
+                    style={{ left: `${tankRight + 60}px`, top: `${canvasHeight - 88}px`, width: '85px' }}
                     className="absolute bg-slate-900/60 border border-slate-800/50 p-2 rounded-xl flex flex-col justify-center select-none backdrop-blur-sm z-20 text-center"
                   >
                     <span className="text-[8px] text-slate-400 font-semibold uppercase tracking-wide">Disch. Time</span>
@@ -1865,12 +2385,29 @@ function App() {
                   </div>
 
                   <div 
-                    style={{ left: `${tankLeft + 75}px`, top: `${canvasHeight - 22}px`, transform: 'translateX(-50%)', width: '400px' }}
-                    className="absolute text-center select-none z-20 flex items-center justify-center space-x-2 text-[10px]"
+                    style={{ left: `${tankLeft + 75}px`, top: `${canvasHeight - 24}px`, transform: 'translateX(-50%)', width: '400px' }}
+                    className="absolute select-none z-20 flex flex-col items-center justify-center text-[10px]"
                   >
-                    <span className="text-slate-400 font-medium">Net Combined Rate:</span>
-                    <span className="font-mono font-bold text-purple-400">{netStatusText} ({formatTime(timeToNet)})</span>
-                    <span className="text-slate-500 font-mono">({Math.abs(netPower).toFixed(0)} kW)</span>
+                    <div className="flex items-center space-x-2 mb-1">
+                      <span className="text-slate-400 font-medium">Time to balance {achievableCapacityKWh.toFixed(1)} kWh ({achievablePercent.toFixed(0)}%):</span>
+                      <button
+                        onClick={() => setShowNetExplanation(true)}
+                        className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700"
+                        title="Explain active sinks and sources equilibrium"
+                      >
+                        ?
+                      </button>
+                    </div>
+                    <div className="flex flex-col text-slate-500 font-mono w-[200px]">
+                      <div className="flex justify-between">
+                        <span>Charging from drained:</span>
+                        <span className="font-bold text-emerald-400">{formatTime(chargeFromDrainedTime)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Discharging from Achievable max:</span>
+                        <span className="font-bold text-purple-400">{formatTime(dischargeFromMaxTime)}</span>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Add Source Button */}
@@ -1906,30 +2443,41 @@ function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
                       data={tempHistory}
-                      margin={{ top: 5, right: 15, left: -20, bottom: 5 }}
+                      margin={{ top: 5, right: 15, left: 10, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                       <XAxis 
                         dataKey="time"
                         type="number"
-                        domain={['auto', 'auto']}
+                        domain={[minTime, maxTime]}
                         tickFormatter={(v) => `${v.toFixed(1)}m`}
                         tick={{ fill: '#64748b', fontSize: 10 }}
                         stroke="#334155"
                       />
                       <YAxis 
                         type="number"
-                        domain={[10, 90]} 
+                        domain={[0, 100]} 
                         tick={{ fill: '#64748b', fontSize: 10 }}
                         stroke="#334155"
                         unit="°C"
-                        width={35}
+                        width={45}
                       />
                       <Tooltip
                         contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px' }}
                         labelStyle={{ color: '#38bdf8', fontSize: 11 }}
                         labelFormatter={(v) => `Time: ${Number(v).toFixed(2)} min`}
                         itemStyle={{ fontSize: 12 }}
+                        itemSorter={(item) => {
+                          const key = item.dataKey || item.name || '';
+                          const order: { [key: string]: number } = {
+                            'Top (100%)': 0,
+                            '75% Height': 1,
+                            '50% Height': 2,
+                            '25% Height': 3,
+                            'Bottom (0%)': 4
+                          };
+                          return order[key] !== undefined ? order[key] : 99;
+                        }}
                       />
                       <Legend 
                         wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }}
@@ -1974,17 +2522,497 @@ function App() {
                         stroke="#3b82f6" 
                         strokeWidth={2}
                         dot={false}
-                        isAnimationActive={false}
+                                        isAnimationActive={false}
                       />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
               </div>
             </div>
-
           </main>
         </div>
       </div>
+
+      {showChargeExplanation && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-6xl w-full max-h-[90vh] shadow-2xl relative flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+              <h3 className="text-sm font-bold text-white">
+                Segmented Thermodynamic Sizing & Solver
+              </h3>
+              <button 
+                onClick={() => setShowChargeExplanation(false)}
+                className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+              
+              {/* Top Section: Side-by-Side Table and Tank Visual */}
+              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_260px] gap-6 items-start">
+                
+                {/* Left Column: Top-Down segments table */}
+                <div className="overflow-x-auto">
+                  <div className="border border-slate-800 rounded-xl bg-slate-950 text-[11px] min-w-[620px] flex flex-col">
+                    {/* Header Row */}
+                    <div className="grid grid-cols-[60px_80px_65px_minmax(0,1fr)_65px_80px_85px] bg-slate-900/80 border-b border-slate-800 text-slate-450 font-semibold px-3 h-[36px] items-center">
+                      <div>Segment</div>
+                      <div>Height Range</div>
+                      <div>Volume</div>
+                      <div>Covering Sources</div>
+                      <div className="text-center">Max Temp</div>
+                      <div className="text-center flex items-center justify-center gap-1 group relative cursor-help">
+                        <span>Time to Heat</span>
+                        <span className="text-[9px] bg-slate-800 hover:bg-slate-700 text-slate-350 px-1 rounded-full font-bold w-3.5 h-3.5 flex items-center justify-center select-none border border-slate-700">?</span>
+                        <div className="absolute hidden group-hover:block bg-slate-950/98 border border-slate-800 text-slate-300 text-[10px] p-2.5 rounded-lg shadow-2xl font-normal w-56 text-left z-50 left-1/2 transform -translate-x-1/2 top-8 leading-relaxed pointer-events-none select-none">
+                          <p className="font-semibold text-slate-100 border-b border-slate-800 pb-1 mb-1">Segment Time to Heat</p>
+                          Calculated as <span className="font-mono text-amber-400 font-semibold">Q_j / Σ P_i</span> (segment energy needed divided by the sum of design power of all loops covering this segment).
+                          <p className="mt-1.5 text-slate-400">The overall total charge time is solved using a max-flow bottleneck algorithm across all overlapping segment subsets.</p>
+                        </div>
+                      </div>
+                      <div className="text-right">Energy (kWh)</div>
+                    </div>
+                    {/* Body Rows */}
+                    <div className="divide-y divide-slate-800/50 flex-1">
+                      {[...segments].reverse().map((seg) => {
+                        const originalIdx = segments.indexOf(seg);
+                        const height = Math.max(38, (seg.yEnd - seg.yStart) * 240);
+                        const sumPower = seg.coveringLoops.reduce((sum, l) => sum + l.designPower, 0);
+                        const timeToHeatStr = sumPower > 0 ? (seg.qNeeded / sumPower).toFixed(2) + ' h' : '—';
+                        return (
+                          <div 
+                            key={originalIdx} 
+                            style={{ height: `${height}px` }}
+                            className="grid grid-cols-[60px_80px_65px_minmax(0,1fr)_65px_80px_85px] items-center px-3 hover:bg-slate-800/20 text-slate-350 transition-colors"
+                          >
+                            <div className="font-semibold text-slate-400">#{originalIdx + 1}</div>
+                            <div className="font-mono text-[10px]">{(seg.yStart * 100).toFixed(0)}% — {(seg.yEnd * 100).toFixed(0)}%</div>
+                            <div className="font-mono text-[10px]">{seg.volume.toFixed(2)} m³</div>
+                            <div className="pr-2">
+                              {seg.coveringLoops.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {seg.coveringLoops.map(l => (
+                                    <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold" style={{ backgroundColor: `${l.color}15`, color: l.color, border: `1px solid ${l.color}30` }}>
+                                      {l.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-slate-655 italic text-[10px]">None (Unheatable)</span>
+                              )}
+                            </div>
+                            <div className="font-mono text-center text-amber-400 font-semibold">{seg.tMax.toFixed(0)}°C</div>
+                            <div className="font-mono text-center text-slate-300 font-semibold">{timeToHeatStr}</div>
+                            <div className="font-mono text-right text-emerald-400 font-semibold">{seg.qNeeded.toFixed(1)} kWh</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Totals Row */}
+                    <div className="grid grid-cols-[60px_80px_65px_minmax(0,1fr)_65px_80px_85px] bg-slate-900/60 border-t border-slate-800 text-slate-200 font-bold px-3 py-2 items-center">
+                      <div>Total</div>
+                      <div className="font-mono text-[10px] text-slate-405 font-normal">0% — 100%</div>
+                      <div className="font-mono text-[10px]">{params.tankVolume.toFixed(2)} m³</div>
+                      <div className="text-[10px] text-slate-405 font-normal">Calculated charge time</div>
+                      <div className="text-center text-slate-450 font-normal">—</div>
+                      <div className="font-mono text-center text-sky-400 font-bold">
+                        {calculatedChargeTimeHours === Infinity ? '—' : calculatedChargeTimeHours.toFixed(2) + ' h'}
+                      </div>
+                      <div className="font-mono text-right text-emerald-400">{achievableCapacityKWh.toFixed(1)} kWh</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Column: Visual Tank Reference and Legend */}
+                <div className="flex flex-col items-center select-none border-t md:border-t-0 md:border-l border-slate-800/50 md:pl-6 relative">
+                  {/* Tank Header to align with table header */}
+                  <div className="h-[36px] flex items-center justify-center w-full">
+                    <h4 className="font-semibold text-slate-300 text-xs">Visual Tank Reference</h4>
+                  </div>
+
+                  <div className="relative flex items-center justify-center px-12 w-full">
+                    
+                    {/* Standard Height Ticks on the right of the tank */}
+                    <div 
+                      className="absolute left-[calc(50%+52px)] w-7 flex flex-col justify-between text-[9px] text-slate-500 font-mono select-none"
+                      style={{ height: `${totalTankHeight}px`, top: '2px' }}
+                    >
+                      <div className="h-0 flex items-center"><span className="w-1 h-[1px] bg-slate-800 mr-1" />100%</div>
+                      <div className="h-0 flex items-center"><span className="w-1 h-[1px] bg-slate-800 mr-1" />75%</div>
+                      <div className="h-0 flex items-center"><span className="w-1 h-[1px] bg-slate-800 mr-1" />50%</div>
+                      <div className="h-0 flex items-center"><span className="w-1 h-[1px] bg-slate-800 mr-1" />25%</div>
+                      <div className="h-0 flex items-center"><span className="w-1 h-[1px] bg-slate-800 mr-1" />0%</div>
+                    </div>
+
+                    {/* Segment Boundary Heights on the right of the tank (further right) */}
+                    <div 
+                      className="absolute left-[calc(50%+82px)] w-10 select-none pointer-events-none"
+                      style={{ height: `${totalTankHeight}px`, top: '2px' }}
+                    >
+                      {boundaries.map((b, i) => (
+                        <div 
+                          key={i} 
+                          className="absolute left-0 h-0 flex items-center text-[9px] text-orange-400 font-mono font-semibold"
+                          style={{ top: `${b.topOffset}px` }}
+                        >
+                          <span className="w-1.5 h-[1px] bg-orange-500 mr-1" />
+                          {(b.heightVal * 100).toFixed(0)}%
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* The Tank */}
+                    <div 
+                      className="relative w-24 bg-slate-950 border-2 border-slate-700 rounded-t-3xl rounded-b-3xl overflow-hidden shadow-inner flex flex-col"
+                      style={{ height: `${totalTankHeight + 4}px` }}
+                    >
+                      {[...segments].reverse().map((seg, idx) => {
+                        const originalIdx = segments.indexOf(seg);
+                        const isUnheatable = seg.tMax <= T_baseline + 1e-5;
+                        const isPartiallyHeated = !isUnheatable && seg.tMax < maxActiveSourceTemp - 1e-5;
+                        const height = Math.max(38, (seg.yEnd - seg.yStart) * 240);
+                        const sumPower = seg.coveringLoops.reduce((sum, l) => sum + l.designPower, 0);
+                        const timeToHeatStr = sumPower > 0 ? (seg.qNeeded / sumPower).toFixed(1) + 'h' : '—';
+
+                        const bgStyle = isUnheatable
+                          ? {
+                              background: 'repeating-linear-gradient(45deg, rgba(30, 58, 138, 0.25) 0px, rgba(30, 58, 138, 0.25) 8px, rgba(59, 130, 246, 0.12) 8px, rgba(59, 130, 246, 0.12) 16px)',
+                              borderBottom: '1px solid rgba(59, 130, 246, 0.3)',
+                            }
+                          : isPartiallyHeated
+                          ? {
+                              background: 'linear-gradient(180deg, rgba(234, 179, 8, 0.35) 0%, rgba(202, 138, 4, 0.2) 100%)',
+                              borderBottom: '1px solid rgba(234, 179, 8, 0.4)',
+                            }
+                          : {
+                              background: 'linear-gradient(180deg, rgba(249, 115, 22, 0.35) 0%, rgba(217, 119, 6, 0.2) 100%)',
+                              borderBottom: '1px solid rgba(249, 115, 22, 0.4)',
+                            };
+
+                        return (
+                          <div
+                            key={originalIdx}
+                            className="relative w-full cursor-help transition-all duration-200 hover:brightness-125 last:border-b-0"
+                            style={{
+                              height: `${height}px`,
+                              ...bgStyle,
+                            }}
+                            onMouseEnter={() => setHoveredSegIdx(originalIdx)}
+                            onMouseLeave={() => setHoveredSegIdx(null)}
+                          >
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-[10px] font-bold text-slate-100 select-none text-center leading-tight">
+                              <span>#{originalIdx + 1}</span>
+                              <span className="text-[9px] font-mono font-medium text-slate-350 mt-0.5">
+                                {seg.tMax.toFixed(0)}°C
+                              </span>
+                              {sumPower > 0 && (
+                                <span className="text-[7.5px] font-mono font-normal text-slate-400 mt-0.5 opacity-90">
+                                  {timeToHeatStr}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Floating Tooltip outside overflow-hidden, positioned relative to parent */}
+                    {hoveredSegIdx !== null && segments[hoveredSegIdx] && (() => {
+                      const reversedIdx = [...segments].reverse().findIndex(seg => segments.indexOf(seg) === hoveredSegIdx);
+                      const centerOffset = segmentCenters[reversedIdx];
+                      const targetSeg = segments[hoveredSegIdx];
+                      const isUnheatable = targetSeg.tMax <= T_baseline + 1e-5;
+                      const isPartiallyHeated = !isUnheatable && targetSeg.tMax < maxActiveSourceTemp - 1e-5;
+                      const sumPower = targetSeg.coveringLoops.reduce((sum, l) => sum + l.designPower, 0);
+                      const timeToHeatStr = sumPower > 0 ? (targetSeg.qNeeded / sumPower).toFixed(2) + ' h' : '—';
+                      const statusText = isUnheatable 
+                        ? 'Unheatable' 
+                        : isPartiallyHeated 
+                        ? 'Partially Heated' 
+                        : 'Fully Heated';
+                      const statusColor = isUnheatable 
+                        ? 'text-blue-400' 
+                        : isPartiallyHeated 
+                        ? 'text-yellow-450' 
+                        : 'text-orange-400';
+
+                      return (
+                        <div 
+                          className="absolute bg-slate-950/95 border border-slate-800 text-[10px] text-slate-200 rounded-lg p-2 shadow-2xl z-50 min-w-[145px] pointer-events-none transition-all duration-150"
+                          style={{
+                            right: 'calc(50% + 56px)', // 50% of parent + half of tank width (48px) + offset (8px)
+                            top: `${centerOffset + 2}px`, // aligned with ticks start
+                            transform: 'translateY(-50%)'
+                          }}
+                        >
+                          <div className="font-bold text-slate-100 border-b border-slate-800 pb-1 mb-1">
+                            Segment #{hoveredSegIdx + 1}
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-400">Span:</span>
+                            <span className="font-mono font-semibold">{(targetSeg.yStart * 100).toFixed(0)}%–{(targetSeg.yEnd * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-400">Volume:</span>
+                            <span className="font-mono font-semibold">{targetSeg.volume.toFixed(2)} m³</span>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-400">Max Temp:</span>
+                            <span className="font-mono font-semibold text-amber-400">{targetSeg.tMax.toFixed(0)}°C</span>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-400">Time to Heat:</span>
+                            <span className="font-mono font-semibold text-slate-350">{timeToHeatStr}</span>
+                          </div>
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-400">Energy:</span>
+                            <span className="font-mono font-semibold text-emerald-400">{targetSeg.qNeeded.toFixed(1)} kWh</span>
+                          </div>
+                          <div className="flex justify-between gap-2 mt-1 border-t border-slate-800/50 pt-1">
+                            <span className="text-slate-400">Status:</span>
+                            <span className={`font-semibold ${statusColor}`}>
+                              {statusText}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Legend below the tank */}
+                  <div className="mt-4 flex flex-col gap-1.5 w-full px-2 text-[10px] items-center md:items-start">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded bg-gradient-to-r from-orange-500/40 to-amber-500/30 border border-orange-500/30 shadow-sm" />
+                      <span className="text-slate-300 font-medium text-[10px]">Fully Heated</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded bg-gradient-to-r from-yellow-500/40 to-yellow-600/30 border border-yellow-500/30 shadow-sm" />
+                      <span className="text-slate-300 font-medium text-[10px]">Partially Heated</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div 
+                        className="w-3.5 h-3.5 rounded border border-blue-500/30 shadow-sm" 
+                        style={{ background: 'repeating-linear-gradient(45deg, rgba(30, 58, 138, 0.3) 0px, rgba(30, 58, 138, 0.3) 4px, rgba(59, 130, 246, 0.15) 4px, rgba(59, 130, 246, 0.15) 8px)' }}
+                      />
+                      <span className="text-slate-300 font-medium text-[10px]">Unheatable Zone</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Section: Separator and Paragraph Explanations */}
+              <div className="border-t border-slate-800/80 pt-3.5 mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs text-slate-405 leading-relaxed">
+                  <div>
+                    <h4 className="font-semibold text-slate-200 mb-1">1. Slicing the Tank into Segments</h4>
+                    <p>
+                      To handle arbitrary port heights, the tank height is sliced into segments using all active port heights as boundary levels (including the bottom 0% and top 100%).
+                      Each segment represents a specific volume portion of the total tank volume.
+                    </p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-slate-200 mb-1">2. Achievable Sizing Capacity (kWh)</h4>
+                    <p>
+                      Instead of assuming the whole tank is heated to the maximum temperature, we identify which segments are actually heated by active source loops.
+                      Due to gravity buoyancy, hot water rises, so a segment is considered heatable if it lies at or above the lowest port height of any active source loop.
+                    </p>
+                    <p className="mt-2 text-emerald-400 font-semibold font-mono text-[10px] bg-slate-950/50 p-1.5 rounded border border-slate-800/50 text-center">
+                      Achievable Capacity: {achievableCapacityKWh.toFixed(1)} kWh ({achievablePercent.toFixed(0)}%)
+                    </p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-slate-200 mb-1">3. Transient Charging Solver (Total Charge Time)</h4>
+                    <p>
+                      To find the overall charging time, we run a fast transient simulation of the tank charging process from its current state. This accounts for sequential loop shutdowns (e.g., when the Heat Pump completes charging the upper zones and turns off, leaving only the Compressed Air loop to heat the lower zone).
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showNetExplanation && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-6xl w-full max-h-[90vh] shadow-2xl relative flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+              <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                <Activity className="w-4 h-4 text-purple-450" />
+                <span>Active Sinks & Sources (Equilibrium Analysis)</span>
+              </h3>
+              <button 
+                onClick={() => setShowNetExplanation(false)}
+                className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+              
+              {/* Top Section: Side-by-Side Table and Tank Visual */}
+              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_260px] gap-6 items-start">
+                
+                {/* Left Column: Top-Down segments table */}
+                <div className="overflow-x-auto">
+                  <div className="border border-slate-800 rounded-xl bg-slate-950 text-[11px] min-w-[620px] flex flex-col">
+                    {/* Header Row */}
+                    <div className="grid grid-cols-[60px_80px_65px_minmax(0,1fr)_minmax(0,1fr)_75px] bg-slate-900/80 border-b border-slate-800 text-slate-450 font-semibold px-3 h-[36px] items-center">
+                      <div>Segment</div>
+                      <div>Height Range</div>
+                      <div>Volume</div>
+                      <div>Covering Sources</div>
+                      <div>Covering Sinks</div>
+                      <div className="text-center">Eq. Temp</div>
+                    </div>
+                    
+                    {/* Data Rows */}
+                    {eqSegments.map((seg, idx) => {
+                      const isUnheatable = seg.coveringSources.length === 0;
+                      return (
+                        <div 
+                          key={idx}
+                          className="grid grid-cols-[60px_80px_65px_minmax(0,1fr)_minmax(0,1fr)_75px] px-3 py-2 border-b border-slate-800/50 last:border-0 hover:bg-slate-800/30 transition items-center"
+                        >
+                          <div className="font-mono text-slate-500 text-[10px]">#{idx + 1}</div>
+                          <div className="font-mono text-slate-300">{(seg.yEnd * 100).toFixed(0)}% - {(seg.yStart * 100).toFixed(0)}%</div>
+                          <div className="text-slate-400 font-mono">{(seg.volume * 1000).toFixed(0)} L</div>
+                          
+                          {/* Covering Sources */}
+                          <div className="flex flex-wrap gap-1">
+                            {seg.coveringSources.length > 0 ? seg.coveringSources.map(l => (
+                              <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
+                                {l.name}
+                              </span>
+                            )) : (
+                              <span className="text-slate-600 italic text-[9px]">-</span>
+                            )}
+                          </div>
+
+                          {/* Covering Sinks */}
+                          <div className="flex flex-wrap gap-1">
+                            {seg.coveringSinks.length > 0 ? seg.coveringSinks.map(l => (
+                              <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 whitespace-nowrap">
+                                {l.name}
+                              </span>
+                            )) : (
+                              <span className="text-slate-600 italic text-[9px]">-</span>
+                            )}
+                          </div>
+
+                          {/* Equilibrium Temp */}
+                          <div className="text-center">
+                            <span className={`font-mono font-bold px-2 py-0.5 rounded ${isUnheatable ? 'text-slate-500 bg-slate-800/50' : 'text-amber-400 bg-amber-500/10'}`}>
+                              {seg.eqTemp.toFixed(1)}°C
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right Column: Visual Tank Representation */}
+                <div className="flex flex-col items-center select-none border-t md:border-t-0 md:border-l border-slate-800/50 md:pl-6 relative">
+                  <div className="h-[36px] flex items-center justify-center w-full">
+                    <h4 className="font-semibold text-slate-300 text-xs">Equilibrium Temp Profile</h4>
+                  </div>
+
+                  <div className="relative flex items-center justify-center px-12 w-full">
+                    {/* Ticks on the right */}
+                    <div 
+                      className="absolute left-[calc(50%+52px)] w-24 flex flex-col justify-between text-[9px] text-slate-500 font-mono select-none"
+                      style={{ height: `240px`, top: '2px' }}
+                    >
+                      <div className="h-0 flex items-center">
+                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
+                        <span className="font-semibold text-slate-400">100%</span>
+                        <span className="ml-1 text-amber-450">({dryRunResults.eqProfile[NUM_NODES - 1].toFixed(0)}°C)</span>
+                      </div>
+                      
+                      <div className="h-0 flex items-center">
+                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
+                        <span className="font-semibold text-slate-400">75%</span>
+                        <span className="ml-1 text-orange-450">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.75)].toFixed(0)}°C)</span>
+                      </div>
+
+                      <div className="h-0 flex items-center">
+                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
+                        <span className="font-semibold text-slate-400">50%</span>
+                        <span className="ml-1 text-yellow-500">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.50)].toFixed(0)}°C)</span>
+                      </div>
+
+                      <div className="h-0 flex items-center">
+                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
+                        <span className="font-semibold text-slate-400">25%</span>
+                        <span className="ml-1 text-sky-400">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.25)].toFixed(0)}°C)</span>
+                      </div>
+
+                      <div className="h-0 flex items-center">
+                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
+                        <span className="font-semibold text-slate-400">0%</span>
+                        <span className="ml-1 text-blue-400">({dryRunResults.eqProfile[0].toFixed(0)}°C)</span>
+                      </div>
+                    </div>
+
+                    {/* The Tank Visual Cylinder */}
+                    <div 
+                      className="relative w-24 bg-slate-950 border-2 border-slate-700 rounded-t-3xl rounded-b-3xl overflow-hidden shadow-inner flex flex-col"
+                      style={{ height: `244px` }}
+                    >
+                      {Array.from({ length: NUM_NODES }).map((_, idx) => {
+                        const nodeIdx = NUM_NODES - 1 - idx;
+                        const temp = dryRunResults.eqProfile[nodeIdx];
+                        const color = getTempColor(temp);
+                        return (
+                          <div 
+                            key={nodeIdx}
+                            className="w-full flex-1 border-b border-slate-900/35 last:border-b-0"
+                            style={{ backgroundColor: color }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Section: Separator and Paragraph Explanations */}
+              <div className="border-t border-slate-800/80 pt-3.5 mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-slate-405 leading-relaxed">
+                  <div>
+                    <h4 className="font-semibold text-slate-200 mb-1">1. Equilibrium Segments</h4>
+                    <p>
+                      The tank height is sliced into segments based on all active port heights from both heating sources and drawing sinks. Each segment represents a volume portion that reaches a distinct steady-state temperature when the system is balanced.
+                    </p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-slate-200 mb-1">2. Settle Times</h4>
+                    <div className="flex flex-col space-y-2 mt-2">
+                      <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-emerald-500/20">
+                        <span className="text-emerald-450 font-medium">Startup Transient (from drained):</span>
+                        <span className="font-mono text-emerald-400 font-bold text-sm">{formatTime(chargeFromDrainedTime)}</span>
+                      </div>
+                      <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-purple-500/20">
+                        <span className="text-purple-400 font-medium">Depletion Transient (from fully charged):</span>
+                        <span className="font-mono text-purple-400 font-bold text-sm">{formatTime(dischargeFromMaxTime)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -172,6 +172,14 @@ export const getLoopActuals = (
   let actualFlowRate = flowRate;
 
   if (loop.type === 'source') {
+    if (T_draw >= loop.designTempSupply) {
+      return {
+        flowRate: 0,
+        tempIn: T_draw,
+        tempOut: T_draw,
+        actualPower: 0
+      };
+    }
     const mode = loop.sourceControlMode || (loop.limitedByPower !== false ? 'tempLimited' : 'unrestricted');
     const potentialDeltaT = Math.max(0, loop.designTempSupply - T_draw);
 
@@ -196,6 +204,14 @@ export const getLoopActuals = (
       tempIn = T_draw + potentialDeltaT;
     }
   } else {
+    if (T_draw <= loop.designTempReturn) {
+      return {
+        flowRate: 0,
+        tempIn: T_draw,
+        tempOut: T_draw,
+        actualPower: 0
+      };
+    }
     const mode = loop.sinkControlMode || 'unrestricted';
     const potentialDeltaT = Math.max(0, T_draw - loop.designTempReturn);
     
