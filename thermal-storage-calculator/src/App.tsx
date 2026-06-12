@@ -248,10 +248,10 @@ function App() {
   };
 
   const { sourcesEndY, sinksEndY } = getColumnsEndY();
-  const canvasHeight = Math.max(580, sourcesEndY + 60, sinksEndY + 60);
+  const canvasHeight = Math.max(680, sourcesEndY + 100, sinksEndY + 100);
 
   const tankTop = 80;
-  const tankHeight = canvasHeight - tankTop - 98;
+  const tankHeight = canvasHeight - tankTop - 160;
   const tankLeft = Math.round((canvasWidth - 150) / 2);
   const tankRight = tankLeft + 150;
 
@@ -344,12 +344,6 @@ function App() {
       ? Math.min(...returnTemps)
       : 20;
 
-    // T_baseline is calculated from activeSinks designTempReturn, or fallback to 20
-    const activeSinks = state.loops.filter(l => l.isActive && l.type === 'sink');
-    const tBaseline = activeSinks.length > 0
-      ? Math.min(...activeSinks.map(l => l.designTempReturn))
-      : 20;
-
     const newTemps: number[] = [];
 
     for (let i = 0; i < NUM_NODES; i++) {
@@ -376,7 +370,7 @@ function App() {
           const tMax = Math.max(...covering.map(l => l.designTempSupply));
           newTemps.push(tMax);
         } else {
-          newTemps.push(tBaseline);
+          newTemps.push(coldestReturn);
         }
       }
     }
@@ -1118,6 +1112,9 @@ function App() {
   const chargeFromDrainedTime = activeSinksCount > 0 ? dryRunResults.drainedToEqTime : dryRunResults.chargeTime;
   const dischargeFromMaxTime = activeSinksCount > 0 ? dryRunResults.chargedToEqTime : 0;
 
+  const equilibriumCapacityKWh = eqSegments.reduce((sum, seg) => sum + (seg.eqTemp > T_baseline ? (seg.volume * 4180 * (seg.eqTemp - T_baseline)) / 3600 : 0), 0);
+  const equilibriumPercent = totalMaxCapacityKWh > 0 ? Math.min(100, (equilibriumCapacityKWh / totalMaxCapacityKWh) * 100) : 0;
+
 
   const formatTime = (hours: number) => {
     if (!isFinite(hours) || hours <= 0) return '—';
@@ -1137,7 +1134,7 @@ function App() {
       <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center space-x-4">
           <a 
-            href="../../index.html" 
+            href={import.meta.env.DEV ? "http://localhost:5000/" : "../../index.html"} 
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -2337,76 +2334,77 @@ function App() {
                   })}
 
                   <div 
-                    style={{ left: `${tankLeft - 50}px`, top: `${canvasHeight - 88}px`, width: '250px' }}
-                    className="absolute bg-slate-900/60 border border-slate-800/50 p-2 rounded-xl flex flex-col space-y-1 select-none backdrop-blur-sm z-20"
+                    style={{ left: '50%', bottom: '20px', transform: 'translateX(-50%)' }}
+                    className="absolute bg-slate-900/60 border border-slate-800/50 rounded-xl flex flex-row select-none backdrop-blur-sm z-20 text-[10px] overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <div className="flex justify-between text-[10px] text-slate-400 font-medium">
-                      <span>Tank Volume</span>
-                      <span className="font-mono text-slate-200 font-bold">{params.tankVolume} m³</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="200"
-                      step="1"
-                      value={params.tankVolume}
-                      onChange={(e) => setParams(prev => ({ ...prev, tankVolume: Number(e.target.value) }))}
-                      className="w-full h-1 bg-slate-850 rounded appearance-none cursor-pointer accent-white"
-                    />
-                  </div>
-
-                  <div 
-                    style={{ left: `${tankLeft - 180}px`, top: `${canvasHeight - 88}px`, width: '120px' }}
-                    className="absolute bg-slate-900/60 border border-slate-800/50 p-2 rounded-xl flex flex-col justify-center select-none backdrop-blur-sm z-20 text-center"
-                  >
-                    <div className="flex items-center justify-center text-slate-400 text-[8px] font-semibold uppercase tracking-wide">
-                      <span>Charge Time</span>
-                      <button
-                        onClick={() => setShowChargeExplanation(true)}
-                        className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700"
-                        title="Explain segmented charging calculations"
-                      >
-                        ?
-                      </button>
-                    </div>
-                    <span className="font-mono text-[11px] text-emerald-400 font-bold mt-0.5">{formatTime(calculatedChargeTimeHours)}</span>
-                    <span className="text-[7.5px] text-slate-400 mt-0.5">Up to {achievableCapacityKWh.toFixed(1)} kWh</span>
-                    <span className="text-[7.5px] text-slate-500 font-medium">({achievablePercent.toFixed(0)}% of max cap)</span>
-                  </div>
-
-                  <div 
-                    style={{ left: `${tankRight + 60}px`, top: `${canvasHeight - 88}px`, width: '85px' }}
-                    className="absolute bg-slate-900/60 border border-slate-800/50 p-2 rounded-xl flex flex-col justify-center select-none backdrop-blur-sm z-20 text-center"
-                  >
-                    <span className="text-[8px] text-slate-400 font-semibold uppercase tracking-wide">Disch. Time</span>
-                    <span className="font-mono text-[11px] text-blue-400 font-bold mt-0.5">{formatTime(timeToDischargeOnly)}</span>
-                    <span className="text-[8px] text-slate-500 mt-0.5">{totalSinkPower} kW</span>
-                  </div>
-
-                  <div 
-                    style={{ left: `${tankLeft + 75}px`, top: `${canvasHeight - 24}px`, transform: 'translateX(-50%)', width: '400px' }}
-                    className="absolute select-none z-20 flex flex-col items-center justify-center text-[10px]"
-                  >
-                    <div className="flex items-center space-x-2 mb-1">
-                      <span className="text-slate-400 font-medium">Time to balance {achievableCapacityKWh.toFixed(1)} kWh ({achievablePercent.toFixed(0)}%):</span>
-                      <button
-                        onClick={() => setShowNetExplanation(true)}
-                        className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700"
-                        title="Explain active sinks and sources equilibrium"
-                      >
-                        ?
-                      </button>
-                    </div>
-                    <div className="flex flex-col text-slate-500 font-mono w-[200px]">
-                      <div className="flex justify-between">
-                        <span>Charging from drained:</span>
-                        <span className="font-bold text-emerald-400">{formatTime(chargeFromDrainedTime)}</span>
+                    {/* Left Column: Charge Time */}
+                    <div className="flex flex-col items-center justify-center p-3 border-r border-slate-800/50 w-[140px] bg-slate-900/40">
+                      <div className="flex items-center text-slate-400 text-[9px] font-semibold uppercase tracking-wide mb-1">
+                        <span>Charge Time</span>
+                        <button
+                          onClick={() => setShowChargeExplanation(true)}
+                          className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700"
+                          title="Explain segmented charging calculations"
+                        >
+                          ?
+                        </button>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Discharging from Achievable max:</span>
-                        <span className="font-bold text-purple-400">{formatTime(dischargeFromMaxTime)}</span>
+                      <span className="font-mono text-[13px] text-emerald-400 font-bold">{formatTime(calculatedChargeTimeHours)}</span>
+                      <span className="text-slate-400 mt-1 text-center">up to {achievableCapacityKWh.toFixed(1)} kWh</span>
+                      <span className="text-slate-500 font-medium">({achievablePercent.toFixed(0)}% of max cap)</span>
+                    </div>
+
+                    {/* Middle Column */}
+                    <div className="flex flex-col w-[360px]">
+                      {/* Tank Volume Slider */}
+                      <div className="flex items-center justify-between p-2 border-b border-slate-800/50 bg-slate-900/20">
+                        <span className="text-slate-400 font-medium pl-2">Tank Volume</span>
+                        <div className="flex-1 px-4">
+                          <input
+                            type="range"
+                            min="1"
+                            max="200"
+                            step="1"
+                            value={params.tankVolume}
+                            onChange={(e) => setParams(prev => ({ ...prev, tankVolume: Number(e.target.value) }))}
+                            className="w-full h-1 bg-slate-850 rounded appearance-none cursor-pointer accent-white"
+                          />
+                        </div>
+                        <span className="font-mono text-slate-200 font-bold pr-2">{params.tankVolume} m³</span>
                       </div>
+                      
+                      {/* Time to balance title */}
+                      <div className="flex justify-center items-center p-2 border-b border-slate-800/50 text-slate-300 font-medium bg-slate-900/40">
+                        Time to balance: {equilibriumCapacityKWh.toFixed(1)} kWh ({equilibriumPercent.toFixed(0)}%)
+                        <button
+                          onClick={() => setShowNetExplanation(true)}
+                          className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700"
+                          title="Explain active sinks and sources equilibrium"
+                        >
+                          ?
+                        </button>
+                      </div>
+
+                      {/* Detail rows */}
+                      <div className="flex flex-col font-mono text-slate-400 bg-slate-900/20">
+                        <div className="flex border-b border-slate-800/50">
+                          <div className="flex-1 p-1.5 text-right border-r border-slate-800/50 flex items-center justify-end pr-3">Charging from drained:</div>
+                          <div className="w-[100px] p-1.5 text-center font-bold text-emerald-400 flex items-center justify-center">{formatTime(chargeFromDrainedTime)}</div>
+                        </div>
+                        <div className="flex">
+                          <div className="flex-1 p-1.5 text-right border-r border-slate-800/50 flex items-center justify-end pr-3">Discharging from Achievable max:</div>
+                          <div className="w-[100px] p-1.5 text-center font-bold text-purple-400 flex items-center justify-center">{formatTime(dischargeFromMaxTime)}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Column: Discharge Time */}
+                    <div className="flex flex-col items-center justify-center p-3 border-l border-slate-800/50 w-[140px] bg-slate-900/40">
+                      <span className="text-slate-400 text-[9px] font-semibold uppercase tracking-wide mb-1">Discharge Time</span>
+                      <span className="font-mono text-[13px] text-purple-400 font-bold">{formatTime(timeToDischargeOnly)}</span>
+                      <span className="text-slate-400 mt-1 text-center">Down to 0.0 kWh</span>
+                      <span className="text-slate-500 font-medium">(0% of max cap)</span>
                     </div>
                   </div>
 
@@ -2842,9 +2840,8 @@ function App() {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-6xl w-full max-h-[90vh] shadow-2xl relative flex flex-col overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
-              <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                <Activity className="w-4 h-4 text-purple-450" />
-                <span>Active Sinks & Sources (Equilibrium Analysis)</span>
+              <h3 className="text-sm font-bold text-white">
+                Active Sinks & Sources (Equilibrium Analysis)
               </h3>
               <button 
                 onClick={() => setShowNetExplanation(false)}
@@ -2864,29 +2861,38 @@ function App() {
                 <div className="overflow-x-auto">
                   <div className="border border-slate-800 rounded-xl bg-slate-950 text-[11px] min-w-[620px] flex flex-col">
                     {/* Header Row */}
-                    <div className="grid grid-cols-[60px_80px_65px_minmax(0,1fr)_minmax(0,1fr)_75px] bg-slate-900/80 border-b border-slate-800 text-slate-450 font-semibold px-3 h-[36px] items-center">
+                    <div className="grid grid-cols-[50px_70px_55px_minmax(0,1fr)_minmax(0,1fr)_60px_60px_65px] bg-slate-900/80 border-b border-slate-800 text-slate-450 font-semibold px-3 h-[36px] items-center text-[10px]">
                       <div>Segment</div>
                       <div>Height Range</div>
                       <div>Volume</div>
                       <div>Covering Sources</div>
                       <div>Covering Sinks</div>
+                      <div className="text-right">Capacity</div>
+                      <div className="text-right">Time</div>
                       <div className="text-center">Eq. Temp</div>
                     </div>
                     
                     {/* Data Rows */}
-                    {eqSegments.map((seg, idx) => {
-                      const isUnheatable = seg.coveringSources.length === 0;
-                      return (
-                        <div 
-                          key={idx}
-                          className="grid grid-cols-[60px_80px_65px_minmax(0,1fr)_minmax(0,1fr)_75px] px-3 py-2 border-b border-slate-800/50 last:border-0 hover:bg-slate-800/30 transition items-center"
-                        >
-                          <div className="font-mono text-slate-500 text-[10px]">#{idx + 1}</div>
-                          <div className="font-mono text-slate-300">{(seg.yEnd * 100).toFixed(0)}% - {(seg.yStart * 100).toFixed(0)}%</div>
-                          <div className="text-slate-400 font-mono">{(seg.volume * 1000).toFixed(0)} L</div>
+                    <div className="divide-y divide-slate-800/50 flex-1">
+                      {eqSegments.map((seg, idx) => {
+                        const isUnheatable = seg.coveringSources.length === 0;
+                        const height = Math.max(38, (seg.yStart - seg.yEnd) * 240);
+                        const qEq = seg.eqTemp > T_baseline ? (seg.volume * 4180 * (seg.eqTemp - T_baseline)) / 3600 : 0;
+                        const sumPower = seg.coveringSources.reduce((sum, l) => sum + l.designPower, 0);
+                        const timeStr = sumPower > 0 ? (qEq / sumPower).toFixed(1) + ' h' : '-';
+
+                        return (
+                          <div 
+                            key={idx}
+                            style={{ height: `${height}px` }}
+                            className="grid grid-cols-[50px_70px_55px_minmax(0,1fr)_minmax(0,1fr)_60px_60px_65px] items-center px-3 hover:bg-slate-800/20 text-slate-350 transition-colors"
+                          >
+                            <div className="font-semibold text-slate-400">#{idx + 1}</div>
+                            <div className="font-mono text-[10px]">{(seg.yEnd * 100).toFixed(0)}% — {(seg.yStart * 100).toFixed(0)}%</div>
+                            <div className="font-mono text-[10px]">{seg.volume.toFixed(2)} m³</div>
                           
                           {/* Covering Sources */}
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1 pr-2">
                             {seg.coveringSources.length > 0 ? seg.coveringSources.map(l => (
                               <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
                                 {l.name}
@@ -2897,7 +2903,7 @@ function App() {
                           </div>
 
                           {/* Covering Sinks */}
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1 pr-2">
                             {seg.coveringSinks.length > 0 ? seg.coveringSinks.map(l => (
                               <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 whitespace-nowrap">
                                 {l.name}
@@ -2907,15 +2913,35 @@ function App() {
                             )}
                           </div>
 
+                          {/* Capacity */}
+                          <div className="font-mono text-[10px] text-emerald-400 text-right pr-2">
+                            {qEq.toFixed(1)} kWh
+                          </div>
+
+                          {/* Time */}
+                          <div className="font-mono text-[10px] text-slate-300 text-right pr-2">
+                            {timeStr}
+                          </div>
+
                           {/* Equilibrium Temp */}
                           <div className="text-center">
-                            <span className={`font-mono font-bold px-2 py-0.5 rounded ${isUnheatable ? 'text-slate-500 bg-slate-800/50' : 'text-amber-400 bg-amber-500/10'}`}>
+                            <span className={`font-mono font-bold px-1.5 py-0.5 rounded text-[10px] ${isUnheatable ? 'text-slate-500 bg-slate-800/50' : 'text-amber-400 bg-amber-500/10'}`}>
                               {seg.eqTemp.toFixed(1)}°C
                             </span>
                           </div>
                         </div>
                       );
                     })}
+                    </div>
+                    {/* Totals Row */}
+                    <div className="grid grid-cols-[50px_70px_55px_minmax(0,1fr)_minmax(0,1fr)_60px_60px_65px] bg-slate-900/60 border-t border-slate-800 text-slate-200 font-bold px-3 py-2 items-center">
+                      <div>Total</div>
+                      <div className="font-mono text-[10px] text-slate-405 font-normal">0% — 100%</div>
+                      <div className="font-mono text-[10px]">{params.tankVolume.toFixed(2)} m³</div>
+                      <div className="text-[10px] text-slate-405 font-normal text-center col-span-2">Steady-state reached</div>
+                      <div className="font-mono text-[10px] text-emerald-400 text-right pr-2">{eqSegments.reduce((sum, seg) => sum + (seg.eqTemp > T_baseline ? (seg.volume * 4180 * (seg.eqTemp - T_baseline)) / 3600 : 0), 0).toFixed(1)} kWh</div>
+                      <div className="font-mono text-center text-amber-400 font-bold col-span-2">—</div>
+                    </div>
                   </div>
                 </div>
 
@@ -2967,18 +2993,39 @@ function App() {
                       className="relative w-24 bg-slate-950 border-2 border-slate-700 rounded-t-3xl rounded-b-3xl overflow-hidden shadow-inner flex flex-col"
                       style={{ height: `244px` }}
                     >
-                      {Array.from({ length: NUM_NODES }).map((_, idx) => {
-                        const nodeIdx = NUM_NODES - 1 - idx;
-                        const temp = dryRunResults.eqProfile[nodeIdx];
-                        const color = getTempColor(temp);
+                      {eqSegments.map((seg, idx) => {
+                        const color = seg.coveringSources.length === 0 ? '#1e293b' : getTempColor(seg.eqTemp);
                         return (
                           <div 
-                            key={nodeIdx}
-                            className="w-full flex-1 border-b border-slate-900/35 last:border-b-0"
-                            style={{ backgroundColor: color }}
-                          />
+                            key={idx}
+                            className="w-full flex items-center justify-center border-b border-black/20 last:border-b-0 relative"
+                            style={{ 
+                              height: `${(seg.yStart - seg.yEnd) * 100}%`,
+                              backgroundColor: color 
+                            }}
+                          >
+                            <span className="text-[10px] font-bold text-white/50 absolute left-2 select-none">
+                              #{idx + 1}
+                            </span>
+                          </div>
                         );
                       })}
+                    </div>
+                  </div>
+
+                  {/* Legend below the tank */}
+                  <div className="mt-4 flex flex-col gap-1.5 w-full px-2 text-[10px] items-center md:items-start">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded bg-orange-500 border border-orange-500/30 shadow-sm" />
+                      <span className="text-slate-300 font-medium text-[10px]">Hot (Source T)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded bg-yellow-450 border border-yellow-500/30 shadow-sm" />
+                      <span className="text-slate-300 font-medium text-[10px]">Warm (Mixed)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded bg-blue-500 border border-blue-500/30 shadow-sm" />
+                      <span className="text-slate-300 font-medium text-[10px]">Cold (Sink/Init T)</span>
                     </div>
                   </div>
                 </div>
@@ -2986,22 +3033,28 @@ function App() {
 
               {/* Bottom Section: Separator and Paragraph Explanations */}
               <div className="border-t border-slate-800/80 pt-3.5 mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-slate-405 leading-relaxed">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs text-slate-405 leading-relaxed">
                   <div>
                     <h4 className="font-semibold text-slate-200 mb-1">1. Equilibrium Segments</h4>
                     <p>
-                      The tank height is sliced into segments based on all active port heights from both heating sources and drawing sinks. Each segment represents a volume portion that reaches a distinct steady-state temperature when the system is balanced.
+                      The tank height is sliced into segments using all active port heights from both heating sources and drawing sinks. Each segment represents a volume portion that reaches a distinct steady-state temperature when balanced.
                     </p>
                   </div>
                   <div>
-                    <h4 className="font-semibold text-slate-200 mb-1">2. Settle Times</h4>
+                    <h4 className="font-semibold text-slate-200 mb-1">2. Steady-State Profile</h4>
+                    <p>
+                      Instead of a simple heated or unheated state, the equilibrium analysis runs a full transient simulation to find the exact temperatures each segment converges to when all active heating and drawing loops are running simultaneously.
+                    </p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-slate-200 mb-1">3. Transient Settle Times</h4>
                     <div className="flex flex-col space-y-2 mt-2">
                       <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-emerald-500/20">
-                        <span className="text-emerald-450 font-medium">Startup Transient (from drained):</span>
+                        <span className="text-emerald-450 font-medium">Startup:</span>
                         <span className="font-mono text-emerald-400 font-bold text-sm">{formatTime(chargeFromDrainedTime)}</span>
                       </div>
                       <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-purple-500/20">
-                        <span className="text-purple-400 font-medium">Depletion Transient (from fully charged):</span>
+                        <span className="text-purple-400 font-medium">Depletion:</span>
                         <span className="font-mono text-purple-400 font-bold text-sm">{formatTime(dischargeFromMaxTime)}</span>
                       </div>
                     </div>
