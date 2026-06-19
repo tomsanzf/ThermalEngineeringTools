@@ -19,6 +19,7 @@
   --c-violet: 260, 80%, 60%;
   --c-orange-red: 8, 90%, 55%;
   --c-blue: 210, 90%, 50%;
+  --c-indigo: 245, 80%, 60%;
 }
 
 /* Reset & Core Styles */
@@ -223,6 +224,7 @@ body {
 .tool-card[data-color="violet"] { --c-card: var(--c-violet); }
 .tool-card[data-color="orange-red"] { --c-card: var(--c-orange-red); }
 .tool-card[data-color="blue"] { --c-card: var(--c-blue); }
+.tool-card[data-color="indigo"] { --c-card: var(--c-indigo); }
 
 .tool-card:hover .card-glow {
   opacity: 0.1;
@@ -360,6 +362,9 @@ body {
 
 .btn-blue { background: hsl(var(--c-blue)); color: #fff; }
 .btn-blue:hover { background: #fff; color: #000; box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); }
+
+.btn-indigo { background: hsl(var(--c-indigo)); color: #fff; }
+.btn-indigo:hover { background: #fff; color: #000; box-shadow: 0 0 20px rgba(99, 102, 241, 0.4); }
 
 /* Footer / Dev Console styling */
 .portal-footer {

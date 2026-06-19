@@ -31,6 +31,7 @@ export interface PinchResults {
   // Plottable points
   hotComposite: { h: number; t: number }[];
   coldComposite: { h: number; t: number }[];
+  coldCompositeRaw: { h: number; t: number }[]; // Unshifted cold composite (starts at H=0)
   grandComposite: { h: number; t: number }[]; // Shifted T vs Enthalpy
 }
 
@@ -212,6 +213,7 @@ export const calculatePinch = (streams: ProcessStream[], dTmin: number): PinchRe
     pinchTempCold,
     hotComposite,
     coldComposite,
+    coldCompositeRaw,
     grandComposite
   };
 };

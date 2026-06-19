@@ -9,7 +9,8 @@ const dirs = [
   'pfd-overlay-studio',
   'sankeyloop/SankeyLoop-Stable',
   'thermal-storage-calculator',
-  'pinch-analysis'
+  'pinch-analysis',
+  'parallel-coordinates'
 ];
 
 console.log("Starting build of all sub-projects...");

@@ -427,3 +427,82 @@ export function computePreservedPositions(scenario: { flows: Flow[], hasDraggedN
   return positions;
 }
 
+export function interpolateFlowColor(colorB: string | undefined, colorA: string | undefined, t: number, cfg: Config): string {
+  const colB = String(colorB || '').trim();
+  const colA = String(colorA !== undefined ? colorA : colorB || '').trim();
+
+  // Case 1: Both are temperatures (numbers)
+  const vB = parseFloat(colB);
+  const vA = parseFloat(colA);
+  if (!isNaN(vB) && !isNaN(vA)) {
+    const v = vB + (vA - vB) * t;
+    return v.toFixed(2);
+  }
+
+  // Case 2: One or both are named/hex colors.
+  const rgbaB = getLinkColor(colB, cfg, 1.0);
+  const rgbaA = getLinkColor(colA, cfg, 1.0);
+
+  const parseRgba = (rgbaStr: string): [number, number, number] => {
+    const match = rgbaStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+      return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
+    }
+    return [150, 150, 150];
+  };
+
+  const [rB, gB, bB] = parseRgba(rgbaB);
+  const [rA, gA, bA] = parseRgba(rgbaA);
+
+  const r = Math.round(rB + (rA - rB) * t);
+  const g = Math.round(gB + (gA - gB) * t);
+  const b = Math.round(bB + (bA - bB) * t);
+
+  const componentToHex = (c: number) => {
+    const hex = c.toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+
+  return `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
+}
+
+export function getNodeLabel(
+  label: string, 
+  total: number, 
+  flows: Flow[], 
+  nodeHPs: Record<string, boolean> | undefined, 
+  valueUnit: string
+): string {
+  if (!label) return '';
+  const isHP = nodeHPs?.[label] || false;
+  if (isHP) {
+    let outSum = 0;
+    let elecInSum = 0;
+    
+    flows.forEach(flow => {
+      let source = String(flow.Source || '').trim();
+      let target = String(flow.Target || '').trim();
+      if (!source || !target) return;
+      
+      let val = parseFloat(String(flow.Value || '').replace(',', '.')) || 0;
+      if (val < 0) {
+        [source, target, val] = [target, source, Math.abs(val)];
+      }
+      
+      const col = String(flow.Color || '').trim().toLowerCase();
+      
+      if (source === label) {
+        outSum += val;
+      }
+      if (target === label && col === 'elec') {
+        elecInSum += val;
+      }
+    });
+    
+    const cop = elecInSum > 0 ? (outSum / elecInSum) : 0;
+    const copText = cop > 0 ? `COP: ${cop.toFixed(2)}` : 'COP: —';
+    return `${label}<br>${copText}<br>${total.toLocaleString('en').replace(/,/g, '\u2009')} ${valueUnit}`;
+  }
+  return `${label}<br>${total.toLocaleString('en').replace(/,/g, '\u2009')} ${valueUnit}`;
+}
+

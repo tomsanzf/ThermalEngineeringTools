@@ -48,4 +48,5 @@ export interface Config {
   aspectRatio: 'fit' | '16:9' | '4:3' | '1:1' | 'custom';
   theme: 'light' | 'dark';
   bgColor: string;
+  nodeHPs?: Record<string, boolean>;
 }

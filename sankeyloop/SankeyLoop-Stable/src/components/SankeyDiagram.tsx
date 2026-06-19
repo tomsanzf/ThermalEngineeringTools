@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Plotly from 'plotly.js-dist-min';
 import { Config, Scenario } from '../types';
-import { buildSankeyData, computeAlignedX, resolveNodeColor, interpolateRgb } from '../lib/sankeyUtils';
+import { buildSankeyData, computeAlignedX, resolveNodeColor, interpolateRgb, getNodeLabel } from '../lib/sankeyUtils';
 
 interface SankeyDiagramProps {
   scenario: Scenario;
@@ -101,7 +101,7 @@ export const SankeyDiagram: React.FC<SankeyDiagramProps> = ({
 
     const displayLabels = labels.map((l, i) => {
       const total = Math.round(Math.max(nodeIn[i], nodeOut[i]));
-      return l ? `${l}<br>${total.toLocaleString('en').replace(/,/g, '\u2009')} ${config.valueUnit}` : '';
+      return getNodeLabel(l, total, scenario.flows, config.nodeHPs, config.valueUnit);
     });
 
     const resolvedDefault = resolveNodeColor(config.defaultNodeColor, '#808080');
