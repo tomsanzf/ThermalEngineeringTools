@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boiler House Efficiency Simulator</title>
+  <style>
+    body {
+      background-color: #0f172a;
+      color: white;
+      font-family: sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .app-container {
+      position: relative;
+      width: 1000px;
+      height: 600px;
+      background-color: #1e293b;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    .input-group {
+      position: absolute;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid #475569;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .input-group label { color: #94a3b8; font-weight: bold; }
+    .input-group input {
+      width: 65px;
+      background: #334155;
+      border: 1px solid #64748b;
+      color: #38bdf8;
+      font-weight: bold;
+      text-align: right;
+      padding: 2px 4px;
+    }
+    .output-value { color: #fbbf24; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <div class="app-container">
+    <svg viewBox="0 0 1000 600" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+        </marker>
+      </defs>
+
+      <path d="M 50, 250 L 120, 250" stroke="#f59e0b" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+      <path d="M 140, 130 L 140, 210" stroke="#38bdf8" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+      <path d="M 400, 200 L 400, 100 L 700, 100" stroke="#cbd5e1" stroke-width="6" fill="none" marker-end="url(#arrow)" />
+      <path d="M 480, 380 L 550, 380 L 550, 500" stroke="#ef4444" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+      
+      <path d="M 700, 460 L 650, 460 L 650, 280 L 510, 280" stroke="#0284c7" stroke-width="4" fill="none" marker-end="url(#arrow)" />
+      
+      <path d="M 800, 120 L 800, 420" stroke="#cbd5e1" stroke-width="3" stroke-dasharray="5,5" fill="none" marker-end="url(#arrow)" />
+      <text x="810" y="260" fill="#cbd5e1" font-size="11">Pegging Steam</text>
+
+      <g id="burner">
+        <rect x="120" y="210" width="60" height="80" rx="5" fill="#475569" stroke="#94a3b8" stroke-width="2" />
+        <polygon points="180,225 210,235 210,265 180,275" fill="#ea580c" opacity="0.8" />
+        <text x="127" y="255" fill="#ffffff" font-size="12" font-weight="bold">BURNER</text>
+      </g>
+      <g id="boiler-body">
+        <rect x="210" y="200" width="300" height="200" rx="20" fill="#334155" stroke="#64748b" stroke-width="4" />
+        <line x1="215" y1="280" x2="505" y2="280" stroke="#0284c7" stroke-width="2" stroke-dasharray="5,5" />
+        <text x="320" y="250" fill="#ffffff" font-size="18" font-weight="bold">BOILER SHELL</text>
+      </g>
+      <g id="fume-stack">
+        <path d="M 450, 200 L 450, 40 L 490, 40 L 490, 200" fill="#1e293b" stroke="#64748b" stroke-width="3" />
+        <text x="500" y="65" fill="#94a3b8" font-size="12" font-weight="bold">FLUE GAS</text>
+      </g>
+      <g id="manifold">
+        <rect x="700" y="80" width="200" height="40" fill="#475569" stroke="#94a3b8" stroke-width="2" />
+        <text x="740" y="105" fill="#ffffff" font-size="12" font-weight="bold">STEAM MANIFOLD</text>
+      </g>
+      <g id="deaerator">
+        <rect x="700" y="420" width="200" height="80" rx="10" fill="#334155" stroke="#64748b" stroke-width="3" />
+        <text x="750" y="465" fill="#ffffff" font-size="14" font-weight="bold">DEAERATOR</text>
+      </g>
+    </svg>
+
+    <div class="input-group" style="top: 260px; left: 20px;">
+      <label>Gas Input (m³/h)</label>
+      <input type="number" id="gasFlow" value="500" step="10">
+    </div>
+
+    <div class="input-group" style="top: 30px; left: 320px;">
+      <label>Stack O₂ (%)</label>
+      <input type="number" id="stackO2" value="3.5" step="0.1">
+      <label>Stack Temp (°C)</label>
+      <input type="number" id="stackTemp" value="220" step="5">
+    </div>
+
+    <div class="input-group" style="top: 130px; left: 20px;">
+      <label>Fresh Air Intake</label>
+      <div>Flow: <span class="output-value" id="airFlowOut">--</span> m³/h</div>
+    </div>
+
+    <div class="input-group" style="top: 300px; left: 330px; background: #020617; border-color: #fbbf24;">
+      <label style="color: #fbbf24;">Est. Efficiency</label>
+      <div style="font-size: 16px;"><span class="output-value" id="efficiencyOut">--</span> %</div>
+    </div>
+
+    <div class="input-group" style="top: 400px; left: 810px;">
+      <label>DA Target Temp (°C)</label>
+      <input type="number" id="daTemp" value="105" step="1">
+      <label>Condensate Return (kg/h)</label>
+      <input type="number" id="condFlow" value="6000" step="100">
+      <label>Condensate Temp (°C)</label>
+      <input type="number" id="condTemp" value="85" step="1">
+      <label>Makeup Water Temp (°C)</label>
+      <input type="number" id="makeupTemp" value="15" step="1">
+    </div>
+
+    <div class="input-group" style="top: 490px; left: 560px;">
+      <label>Feedwater Demand</label>
+      <input type="number" id="fwFlow" value="10000" step="100">
+      <hr style="border-color: #475569; width: 100%;">
+      <div>Steam Required: <span class="output-value" id="steamReqOut">--</span> kg/h</div>
+      <div>Makeup Required: <span class="output-value" id="makeupReqOut">--</span> kg/h</div>
+    </div>
+  </div>
+
+  <script>
+    // Burner Elements
+    const gasFlowInput = document.getElementById('gasFlow');
+    const stackO2Input = document.getElementById('stackO2');
+    const stackTempInput = document.getElementById('stackTemp');
+    const airFlowOut = document.getElementById('airFlowOut');
+    const efficiencyOut = document.getElementById('efficiencyOut');
+
+    // Deaerator Elements
+    const fwFlowInput = document.getElementById('fwFlow');
+    const daTempInput = document.getElementById('daTemp');
+    const condFlowInput = document.getElementById('condFlow');
+    const condTempInput = document.getElementById('condTemp');
+    const makeupTempInput = document.getElementById('makeupTemp');
+    const steamReqOut = document.getElementById('steamReqOut');
+    const makeupReqOut = document.getElementById('makeupReqOut');
+
+    // Constants
+    const theoreticalAirRatio = 9.52; 
+    const Cp = 4.18; // Specific heat of water (kJ/kg-C)
+    const h_steam = 2770; // Approx enthalpy of low pressure pegging steam (kJ/kg)
+
+    function calculateSystem() {
+      /* --- 1. BOILER EFFICIENCY & BURNER --- */
+      const gasFlow = parseFloat(gasFlowInput.value);
+      const o2Percent = parseFloat(stackO2Input.value);
+      const stackTemp = parseFloat(stackTempInput.value);
+
+      let lambda = 21 / (21 - o2Percent);
+      if (lambda < 1 || !isFinite(lambda)) lambda = 1.0; 
+      const actualAirFlow = gasFlow * theoreticalAirRatio * lambda;
+
+      const co2Percent = 11.8 * (1 - (o2Percent / 21));
+      let efficiency = 100 - (0.66 * (stackTemp - 20) / co2Percent) - 2.0;
+      if (efficiency > 100) efficiency = 99.9;
+
+      airFlowOut.innerText = actualAirFlow.toFixed(0);
+      efficiencyOut.innerText = efficiency.toFixed(1);
+
+      /* --- 2. DEAERATOR MASS & ENERGY BALANCE --- */
+      const fwFlow = parseFloat(fwFlowInput.value);
+      const daTemp = parseFloat(daTempInput.value);
+      const condFlow = parseFloat(condFlowInput.value);
+      const condTemp = parseFloat(condTempInput.value);
+      const makeupTemp = parseFloat(makeupTempInput.value);
+
+      // Energy balance solved for Steam Flow:
+      // m_steam = [ m_fw * Cp * (T_da - T_makeup) - m_cond * Cp * (T_cond - T_makeup) ] / [ h_steam - Cp * T_makeup ]
+      
+      let num = (fwFlow * Cp * (daTemp - makeupTemp)) - (condFlow * Cp * (condTemp - makeupTemp));
+      let den = h_steam - (Cp * makeupTemp);
+      
+      let m_steam = num / den;
+      if (m_steam < 0) m_steam = 0; // Prevent negative steam flow if condensate is too hot/abundant
+
+      // Mass balance solved for Makeup Water
+      let m_makeup = fwFlow - condFlow - m_steam;
+      if (m_makeup < 0) m_makeup = 0;
+
+      steamReqOut.innerText = m_steam.toFixed(0);
+      makeupReqOut.innerText = m_makeup.toFixed(0);
+    }
+
+    // Event Listeners for all inputs
+    const inputs = document.querySelectorAll('input');
+    inputs.forEach(input => {
+      input.addEventListener('input', calculateSystem);
+    });
+
+    // Run once on load
+    calculateSystem();
+  </script>
+
+</body>
+</html>

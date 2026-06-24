@@ -37,10 +37,11 @@ export interface PinchResults {
 
 export const createDefaultStreams = (): ProcessStream[] => {
   return [
-    { id: '1', name: 'Reactor Feed Preheater', type: 'cold', tempIn: 20, tempOut: 135, cp: 2.0, q: 230 },
-    { id: '2', name: 'Distillation Column Condenser', type: 'hot', tempIn: 170, tempOut: 60, cp: 3.0, q: 330 },
-    { id: '3', name: 'Evaporator Feed Heater', type: 'cold', tempIn: 80, tempOut: 140, cp: 4.0, q: 240 },
-    { id: '4', name: 'Reactor Product Cooler', type: 'hot', tempIn: 150, tempOut: 30, cp: 1.5, q: 180 }
+    { id: '1', name: 'Hot air', type: 'hot', tempIn: 90, tempOut: 40, cp: 2.0, q: 100 },
+    { id: '2', name: 'Chiller\'s Condenser', type: 'hot', tempIn: 30, tempOut: 25, cp: 20.0, q: 100 },
+    { id: '3', name: 'Air Compressor\'s HR', type: 'hot', tempIn: 70, tempOut: 50, cp: 5.0, q: 100 },
+    { id: '4', name: 'DHW', type: 'cold', tempIn: 10, tempOut: 50, cp: 3.75, q: 150 },
+    { id: '5', name: 'Hot Water Loop', type: 'cold', tempIn: 90, tempOut: 100, cp: 20.0, q: 200 }
   ];
 };
 
@@ -183,9 +184,9 @@ export const calculatePinch = (streams: ProcessStream[], dTmin: number): PinchRe
     }
   }
 
-  // To display them correctly relative to each other, we shift the Cold Composite curve by qhMin (hot utility).
+  // To display them correctly relative to each other, we shift the Cold Composite curve by qcMin (cold utility).
   const coldComposite = coldCompositeRaw.map(pt => ({
-    h: pt.h + qhMin,
+    h: pt.h + qcMin,
     t: pt.t
   }));
 
