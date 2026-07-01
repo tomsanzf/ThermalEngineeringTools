@@ -19,18 +19,18 @@ const ClampedNumericInput: React.FC<ClampedNumericInputProps> = ({
   defaultValue = 0
 }) => {
   const [localVal, setLocalVal] = React.useState<string>(value.toString());
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const isKeyboardTyping = React.useRef<boolean>(false);
 
   React.useEffect(() => {
-    // Sync local state if parent value changes (not active typing)
     if (document.activeElement !== inputRef.current) {
       setLocalVal(value.toString());
+      isKeyboardTyping.current = false;
     }
   }, [value]);
 
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  const commitValue = () => {
-    let num = parseFloat(localVal);
+  const commitValue = (valStr: string) => {
+    let num = parseFloat(valStr);
     
     if (isNaN(num)) {
       num = defaultValue !== undefined ? defaultValue : (min !== undefined ? min : 0);
@@ -44,10 +44,29 @@ const ClampedNumericInput: React.FC<ClampedNumericInputProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    isKeyboardTyping.current = true;
     if (e.key === 'Enter') {
-      commitValue();
+      commitValue(localVal);
       inputRef.current?.blur();
     }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setLocalVal(val);
+    
+    if (!isKeyboardTyping.current) {
+      commitValue(val);
+    }
+  };
+
+  const handleBlur = () => {
+    commitValue(localVal);
+    isKeyboardTyping.current = false;
+  };
+
+  const handleMouseDown = () => {
+    isKeyboardTyping.current = false;
   };
 
   return (
@@ -56,9 +75,10 @@ const ClampedNumericInput: React.FC<ClampedNumericInputProps> = ({
       type="number"
       step={step}
       value={localVal}
-      onChange={(e) => setLocalVal(e.target.value)}
-      onBlur={commitValue}
+      onChange={handleChange}
+      onBlur={handleBlur}
       onKeyDown={handleKeyDown}
+      onMouseDown={handleMouseDown}
     />
   );
 };
