@@ -63,9 +63,6 @@ const interpolateT = (
   if (points.length === 1) return points[0].t;
 
   const EPSILON = 1e-9;
-  if (h < points[0].h - EPSILON) return points[0].t;
-  if (h > points[points.length - 1].h + EPSILON) return points[points.length - 1].t;
-
   const candidates: number[] = [];
 
   for (let i = 0; i < points.length - 1; i++) {
@@ -77,11 +74,9 @@ const interpolateT = (
 
     if (h >= minH - EPSILON && h <= maxH + EPSILON) {
       if (Math.abs(p2.h - p1.h) < EPSILON) {
-        // Vertical segment
         candidates.push(p1.t);
         candidates.push(p2.t);
       } else {
-        // Slanted segment
         const ratio = (h - p1.h) / (p2.h - p1.h);
         candidates.push(p1.t + ratio * (p2.t - p1.t));
       }
@@ -89,8 +84,17 @@ const interpolateT = (
   }
 
   if (candidates.length === 0) {
-    if (h <= points[0].h) return points[0].t;
-    return points[points.length - 1].t;
+    // If h is outside the range of any segment, return the temperature of the closest endpoint in terms of h
+    let closestPt = points[0];
+    let minDiff = Math.abs(h - points[0].h);
+    for (let i = 1; i < points.length; i++) {
+      const diff = Math.abs(h - points[i].h);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestPt = points[i];
+      }
+    }
+    return closestPt.t;
   }
 
   return preferMax ? Math.max(...candidates) : Math.min(...candidates);
@@ -102,7 +106,15 @@ function App() {
   const [dTmin, setDTmin] = useState<number>(10);
   const [activeStep, setActiveStep] = useState<number>(0);
   const [showHelp, setShowHelp] = useState<boolean>(false);
-  
+
+  // Heat Pump State (Step 7)
+  const [hpCapacity, setHpCapacity] = useState<number>(50); // kW
+  const [hpCondGlide, setHpCondGlide] = useState<number>(10); // °C
+  const [hpEvapGlide, setHpEvapGlide] = useState<number>(10); // °C
+  const [gasPrice, setGasPrice] = useState<number>(60); // €/MWh
+  const [electricityPrice, setElectricityPrice] = useState<number>(150); // €/MWh
+  const [carnotEfficiency, setCarnotEfficiency] = useState<number>(0.55); // fraction
+
   // Form State for new stream
   const [newStream, setNewStream] = useState<Omit<ProcessStream, 'id'>>({
     name: 'New Stream',
@@ -117,6 +129,226 @@ function App() {
   const results = useMemo(() => {
     return calculatePinch(streams, dTmin);
   }, [streams, dTmin]);
+
+  // Keep HP capacity within the target heating utility limits
+  React.useEffect(() => {
+    if (hpCapacity > results.qhMin) {
+      setHpCapacity(Math.round(results.qhMin * 10) / 10);
+    }
+  }, [results.qhMin]);
+
+  const hpData = useMemo(() => {
+    // 1. Shifted GCC above and below pinch (actual temperatures from utility perspective)
+    // Plotted arrays are kept in temperature-sorted order so Recharts draws the curve correctly.
+    const plottedGccAbove = results.grandComposite
+      .filter(pt => pt.t >= results.pinchTempShifted)
+      .map(pt => ({
+        h: Math.round(pt.h * 10) / 10,
+        t: Math.round((pt.t + dTmin / 2) * 10) / 10
+      }));
+
+    const plottedGccBelow = results.grandComposite
+      .filter(pt => pt.t <= results.pinchTempShifted)
+      .map(pt => ({
+        h: Math.round(pt.h * 10) / 10,
+        t: Math.round((pt.t - dTmin / 2) * 10) / 10
+      }));
+
+    if (plottedGccAbove.length === 0 || plottedGccBelow.length === 0) {
+      return {
+        plottedGccAbove: [],
+        plottedGccBelow: [],
+        tCondIn: 0,
+        tCondOut: 0,
+        tEvapIn: 0,
+        tEvapOut: 0,
+        qEvap: 0,
+        cop: 1.0,
+        carnotCop: 1.0,
+        compressorPower: 0,
+        hourlySavings: 0,
+        annualSavings: 0
+      };
+    }
+
+    // 2. Condenser Inlet/Outlet Temperatures
+    const condCandidates = [0, hpCapacity];
+    plottedGccAbove.forEach(pt => {
+      if (pt.h > 1e-5 && pt.h < hpCapacity - 1e-5) {
+        condCandidates.push(pt.h);
+      }
+    });
+
+    let minF = Infinity;
+    condCandidates.forEach(h => {
+      const tGcc = interpolateT(plottedGccAbove, h, true);
+      if (tGcc !== undefined) {
+        const fraction = hpCapacity > 1e-5 ? h / hpCapacity : 0;
+        const val = fraction * hpCondGlide - tGcc;
+        if (val < minF) minF = val;
+      }
+    });
+
+    const tCondIn = dTmin - minF;
+    const tCondOut = tCondIn + hpCondGlide;
+
+    // 3. Solve for COP and Evaporator Temperatures (coupled since Q_evap depends on COP)
+    // Slope is negative (T_evap_out < T_evap_in) as evaporator cools process streams below pinch.
+    let cop = 4.0;
+    let tEvapIn = 0;
+    let tEvapOut = 0;
+    let qEvap = 0;
+
+    for (let iter = 0; iter < 50; iter++) {
+      qEvap = hpCapacity * (1 - 1 / cop);
+
+      const evapCandidates = [0, qEvap];
+      plottedGccBelow.forEach(pt => {
+        if (pt.h > 1e-5 && pt.h < qEvap - 1e-5) {
+          evapCandidates.push(pt.h);
+        }
+      });
+
+      let minG = Infinity;
+      evapCandidates.forEach(h => {
+        const tGcc = interpolateT(plottedGccBelow, h, false);
+        if (tGcc !== undefined) {
+          const fraction = qEvap > 1e-5 ? h / qEvap : 0;
+          const val = tGcc - dTmin + fraction * hpEvapGlide;
+          if (val < minG) minG = val;
+        }
+      });
+
+      tEvapIn = minG;
+      tEvapOut = tEvapIn - hpEvapGlide;
+
+      const delta = tCondOut - tEvapOut;
+      const carnotCop = delta > 0.1 ? (tCondOut + 273.15) / delta : 1.0;
+      const newCop = carnotCop * carnotEfficiency;
+
+      if (Math.abs(newCop - cop) < 1e-4) {
+        cop = newCop;
+        break;
+      }
+      cop = newCop;
+    }
+
+    const compressorPower = cop > 1e-5 ? hpCapacity / cop : 0;
+
+    // 4. Economics
+    // Gas savings (boiler efficiency = 90%): HP replaces gas boiler
+    const gasSavingsCost = (hpCapacity / 0.90) * (gasPrice / 1000); // €/h
+    const electricityCost = compressorPower * (electricityPrice / 1000); // €/h
+    const hourlySavings = gasSavingsCost - electricityCost;
+    const annualSavings = hourlySavings * 8000;
+
+    return {
+      plottedGccAbove,
+      plottedGccBelow,
+      tCondIn: Math.round(tCondIn * 10) / 10,
+      tCondOut: Math.round(tCondOut * 10) / 10,
+      tEvapIn: Math.round(tEvapIn * 10) / 10,
+      tEvapOut: Math.round(tEvapOut * 10) / 10,
+      qEvap: Math.round(qEvap * 10) / 10,
+      cop: Math.round(cop * 100) / 100,
+      carnotCop: Math.round(((tCondOut + 273.15) / Math.max(tCondOut - tEvapOut, 0.1)) * 100) / 100,
+      compressorPower: Math.round(compressorPower * 10) / 10,
+      hourlySavings: Math.round(hourlySavings * 100) / 100,
+      annualSavings: Math.round(annualSavings)
+    };
+  }, [results, dTmin, hpCapacity, hpCondGlide, hpEvapGlide, gasPrice, electricityPrice, carnotEfficiency]);
+
+  // Helper to calculate savings for any arbitrary capacity Q_cond (used in tooltip and savings curve)
+  const calculateSavingsForCapacity = useMemo(() => {
+    return (Q_cond: number) => {
+      if (Q_cond < 1e-3 || hpData.plottedGccAbove.length === 0 || hpData.plottedGccBelow.length === 0) {
+        return { savings: 0, cop: 1.0, W_comp: 0, qEvap: 0 };
+      }
+
+      // 1. Condenser Inlet/Outlet Temperatures for Q_cond
+      const condCandidates = [0, Q_cond];
+      hpData.plottedGccAbove.forEach(pt => {
+        if (pt.h > 1e-5 && pt.h < Q_cond - 1e-5) {
+          condCandidates.push(pt.h);
+        }
+      });
+
+      let minF = Infinity;
+      condCandidates.forEach(h => {
+        const tGcc = interpolateT(hpData.plottedGccAbove, h, true);
+        if (tGcc !== undefined) {
+          const fraction = Q_cond > 1e-5 ? h / Q_cond : 0;
+          const val = fraction * hpCondGlide - tGcc;
+          if (val < minF) minF = val;
+        }
+      });
+
+      const tCondIn = dTmin - minF;
+      const tCondOut = tCondIn + hpCondGlide;
+
+      // 2. Solver for Evaporator & COP
+      let cop = 4.0;
+      let tEvapIn = 0;
+      let tEvapOut = 0;
+      let qEvap = 0;
+
+      for (let iter = 0; iter < 50; iter++) {
+        qEvap = Q_cond * (1 - 1 / cop);
+
+        const evapCandidates = [0, qEvap];
+        hpData.plottedGccBelow.forEach(pt => {
+          if (pt.h > 1e-5 && pt.h < qEvap - 1e-5) {
+            evapCandidates.push(pt.h);
+          }
+        });
+
+        let minG = Infinity;
+        evapCandidates.forEach(h => {
+          const tGcc = interpolateT(hpData.plottedGccBelow, h, false);
+          if (tGcc !== undefined) {
+            const fraction = qEvap > 1e-5 ? h / qEvap : 0;
+            const val = tGcc - dTmin + fraction * hpEvapGlide;
+            if (val < minG) minG = val;
+          }
+        });
+
+        tEvapIn = minG;
+        tEvapOut = tEvapIn - hpEvapGlide;
+
+        const delta = tCondOut - tEvapOut;
+        const carnotCop = delta > 0.1 ? (tCondOut + 273.15) / delta : 1.0;
+        const newCop = carnotCop * carnotEfficiency;
+
+        if (Math.abs(newCop - cop) < 1e-4) {
+          cop = newCop;
+          break;
+        }
+        cop = newCop;
+      }
+
+      const W_comp = cop > 1e-5 ? Q_cond / cop : 0;
+      const gasSavingsCost = (Q_cond / 0.90) * (gasPrice / 1000); // €/h
+      const electricityCost = W_comp * (electricityPrice / 1000); // €/h
+      const savings = gasSavingsCost - electricityCost;
+
+      return { savings, cop, W_comp, qEvap };
+    };
+  }, [hpData, hpCondGlide, hpEvapGlide, gasPrice, electricityPrice, carnotEfficiency, dTmin]);
+
+  const savingsCurveData = useMemo(() => {
+    if (activeStep !== 6 || results.qhMin < 1e-2) return [];
+    const pts: { h: number; savings: number }[] = [];
+    const stepsCount = 20;
+    for (let i = 0; i <= stepsCount; i++) {
+      const q = (i / stepsCount) * results.qhMin;
+      const res = calculateSavingsForCapacity(q);
+      pts.push({
+        h: Math.round(q * 10) / 10,
+        savings: Math.round(res.savings * 100) / 100
+      });
+    }
+    return pts;
+  }, [activeStep, results.qhMin, calculateSavingsForCapacity]);
 
   // Handle adding stream
   // Handle adding stream
@@ -341,6 +573,54 @@ function App() {
     };
   }, [activeStep]);
 
+  // Step 6 transition progress:
+  // 0.0 -> 0.4: Vertical shift (unshifting temperature by dTmin/2)
+  // 0.4 -> 0.6: Gaps fade in (opacity goes 0 -> 1)
+  // 0.6 -> 1.0: Horizontal shift (opening gaps)
+  const [step6Transition, setStep6Transition] = useState<number>(activeStep === 5 ? 1 : 0);
+
+  React.useEffect(() => {
+    let animationFrameId: number;
+    const startTime = performance.now();
+    const duration = 1600; // 1.6 seconds transition
+    const startVal = step6Transition;
+    const targetVal = activeStep === 5 ? 1 : 0;
+
+    if (startVal === targetVal) return;
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // easeInOutCubic
+      const ease = progress < 0.5 
+        ? 4 * progress * progress * progress 
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      
+      const currentVal = startVal + (targetVal - startVal) * ease;
+      setStep6Transition(currentVal);
+
+      if (progress < 1) {
+        animationFrameId = requestAnimationFrame(animate);
+      } else {
+        setStep6Transition(targetVal);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [activeStep]);
+
+  // Step 6 transition factors
+  const step6TransitionFactors = useMemo(() => {
+    const p = step6Transition;
+    const fVert = Math.min(p / 0.4, 1);
+    const fOpacity = p < 0.4 ? 0 : Math.min((p - 0.4) / 0.2, 1);
+    const fHoriz = p < 0.6 ? 0 : Math.min((p - 0.6) / 0.4, 1);
+    return { fVert, fOpacity, fHoriz };
+  }, [step6Transition]);
+
   // Sort streams by target offset to get their animation order (left-to-right)
   const sortedStreams = useMemo(() => {
     return [...streams].sort((a, b) => {
@@ -537,10 +817,16 @@ function App() {
         coldSegmentsBelow: [],
         coldAbovePinchSteady: [],
         hotBelowPinchSteady: [],
+        heatingGaps: [],
+        coolingGaps: [],
         offset: 0,
         pinchH: 0
       };
     }
+
+    const { fVert, fOpacity, fHoriz } = step6TransitionFactors;
+    const hPinchCold = hPinch;
+    const hPinchHot = hPinch;
 
     // 1. Find pinch index
     let pinchIdx = 0;
@@ -555,7 +841,6 @@ function App() {
     const pinchTempCold = pinchTempShifted - dTmin / 2;
 
     // 2. Compute running-minimum shifts
-    // Above pinch: shifts_above[j] = min_{0 <= i <= j} W_i
     const shiftsAbove: number[] = [];
     for (let j = 0; j <= pinchIdx; j++) {
       let minVal = Infinity;
@@ -565,7 +850,6 @@ function App() {
       shiftsAbove.push(minVal);
     }
 
-    // Below pinch: shifts_below[idx] = min_{j <= i <= M-1} W_i
     const shiftsBelow: number[] = [];
     for (let j = pinchIdx; j < cascade.length; j++) {
       let minVal = Infinity;
@@ -575,8 +859,8 @@ function App() {
       shiftsBelow.push(minVal);
     }
 
-    // 3. Slice Hot Composite Above the Pinch
-    const hotSegmentsAbove: { key: string; name: string; data: { h: number; t: number }[] }[] = [];
+    // 3. Hot Segments (Above the Pinch)
+    const hotSegmentsAbove: { key: string; name: string; points: { h: number; t: number }[]; shift: number }[] = [];
     for (let k = 0; k < pinchIdx; k++) {
       const t_start = temps[k];
       const t_end = temps[k + 1];
@@ -590,7 +874,6 @@ function App() {
       
       if (h_high - h_low <= 1e-3) continue;
       
-      // Gather vertices
       const points: { h: number; t: number }[] = [{ h: h_low, t: t_hot_low }];
       hot.forEach(pt => {
         if (pt.t > t_hot_low + 1e-5 && pt.t < t_hot_high - 1e-5) {
@@ -599,23 +882,17 @@ function App() {
       });
       points.push({ h: h_high, t: t_hot_high });
       
-      // Shift for this segment (rightwards shift)
-      const shift = shiftsAbove[k + 1];
-      
-      const shiftedPoints = points.map(pt => ({
-        h: pt.h + shift,
-        t: pt.t
-      }));
-      
+      const shift = shiftsAbove[k];
       hotSegmentsAbove.push({
         key: `hot-seg-above-${k}`,
         name: `Hot Segment (${Math.round(t_hot_low * 10) / 10}°C - ${Math.round(t_hot_high * 10) / 10}°C)`,
-        data: shiftedPoints
+        points,
+        shift
       });
     }
 
-    // 4. Slice Cold Composite Below the Pinch
-    const coldSegmentsBelow: { key: string; name: string; data: { h: number; t: number }[] }[] = [];
+    // 4. Cold Segments (Below the Pinch)
+    const coldSegmentsBelow: { key: string; name: string; points: { h: number; t: number }[]; shift: number }[] = [];
     for (let k = pinchIdx; k < temps.length - 1; k++) {
       const t_start = temps[k];
       const t_end = temps[k + 1];
@@ -629,7 +906,6 @@ function App() {
       
       if (h_high - h_low <= 1e-3) continue;
       
-      // Gather vertices
       const points: { h: number; t: number }[] = [{ h: h_low, t: t_cold_low }];
       aligned.forEach(pt => {
         if (pt.t > t_cold_low + 1e-5 && pt.t < t_cold_high - 1e-5) {
@@ -638,112 +914,171 @@ function App() {
       });
       points.push({ h: h_high, t: t_cold_high });
       
-      // Shift for this segment (leftwards shift)
       const shift = shiftsBelow[k - pinchIdx];
-      
-      const shiftedPoints = points.map(pt => ({
-        h: pt.h - shift,
-        t: pt.t
-      }));
-      
       coldSegmentsBelow.push({
         key: `cold-seg-below-${k}`,
         name: `Cold Segment (${Math.round(t_cold_low * 10) / 10}°C - ${Math.round(t_cold_high * 10) / 10}°C)`,
-        data: shiftedPoints
+        points,
+        shift
       });
     }
 
     // 5. Steady Cold Curve Above the Pinch
-    const coldAbovePinchSteady: { h: number; t: number }[] = [];
+    const coldAbovePinchSteadyRaw: { h: number; t: number }[] = [];
     const hPinchColdAligned = interpolateH(aligned, pinchTempCold);
-    coldAbovePinchSteady.push({ h: hPinchColdAligned, t: pinchTempCold });
+    coldAbovePinchSteadyRaw.push({ h: hPinchColdAligned, t: pinchTempCold });
     aligned.forEach(pt => {
       if (pt.t > pinchTempCold + 1e-5) {
-        coldAbovePinchSteady.push(pt);
+        coldAbovePinchSteadyRaw.push(pt);
       }
     });
 
     // 6. Steady Hot Curve Below the Pinch
-    const hotBelowPinchSteady: { h: number; t: number }[] = [];
+    const hotBelowPinchSteadyRaw: { h: number; t: number }[] = [];
     hot.forEach(pt => {
       if (pt.t < pinchTempHot - 1e-5) {
-        hotBelowPinchSteady.push(pt);
+        hotBelowPinchSteadyRaw.push(pt);
       }
     });
-    const hPinchHot = interpolateH(hot, pinchTempHot);
-    hotBelowPinchSteady.push({ h: hPinchHot, t: pinchTempHot });
+    const hPinchHotAligned = interpolateH(hot, pinchTempHot);
+    hotBelowPinchSteadyRaw.push({ h: hPinchHotAligned, t: pinchTempHot });
 
-    // 7. Calculate offset to keep minimum enthalpy at 0
+    // 7. Calculate offset based on final positions to keep minimum enthalpy at 0
     let minH = 0;
     coldSegmentsBelow.forEach(seg => {
-      seg.data.forEach(pt => {
-        if (pt.h < minH) minH = pt.h;
+      seg.points.forEach(pt => {
+        const h_final = pt.h - seg.shift;
+        if (h_final < minH) minH = h_final;
       });
     });
     hotSegmentsAbove.forEach(seg => {
-      seg.data.forEach(pt => {
-        if (pt.h < minH) minH = pt.h;
+      seg.points.forEach(pt => {
+        const h_final = pt.h + seg.shift;
+        if (h_final < minH) minH = h_final;
       });
     });
-    coldAbovePinchSteady.forEach(pt => {
+    coldAbovePinchSteadyRaw.forEach(pt => {
       if (pt.h < minH) minH = pt.h;
     });
-    hotBelowPinchSteady.forEach(pt => {
+    hotBelowPinchSteadyRaw.forEach(pt => {
       if (pt.h < minH) minH = pt.h;
     });
 
     const offset = minH < 0 ? -minH : 0;
 
-    // 7.5. Compute Heating Gaps (Above Pinch)
-    const heatingGapsRaw: { t: number; q: number; hStart: number; hEnd: number }[] = [];
+    // Apply animation interpolation
+    const animatedColdAbovePinchSteady = coldAbovePinchSteadyRaw.map(pt => {
+      const h_final = pt.h + offset;
+      const t_final = pt.t;
+      const h_gcc = pt.h - hPinchCold;
+      const t_gcc = pt.t + dTmin / 2;
+      return {
+        h: Math.round((h_gcc + fHoriz * (h_final - h_gcc)) * 10) / 10,
+        t: Math.round((t_gcc - fVert * (dTmin / 2)) * 10) / 10
+      };
+    });
+
+    const animatedHotBelowPinchSteady = hotBelowPinchSteadyRaw.map(pt => {
+      const h_final = pt.h + offset;
+      const t_final = pt.t;
+      const h_gcc = pt.h - hPinchHot;
+      const t_gcc = pt.t - dTmin / 2;
+      return {
+        h: Math.round((h_gcc + fHoriz * (h_final - h_gcc)) * 10) / 10,
+        t: Math.round((t_gcc + fVert * (dTmin / 2)) * 10) / 10
+      };
+    });
+
+    const animatedHotSegmentsAbove = hotSegmentsAbove.map(seg => ({
+      key: seg.key,
+      name: seg.name,
+      data: seg.points.map(pt => {
+        const h_final = pt.h + seg.shift + offset;
+        const t_final = pt.t;
+        const h_gcc = pt.h - hPinchCold;
+        const t_gcc = pt.t + dTmin / 2;
+        return {
+          h: Math.round((h_gcc + fHoriz * (h_final - h_gcc)) * 10) / 10,
+          t: Math.round((t_gcc - fVert * (dTmin / 2)) * 10) / 10
+        };
+      })
+    }));
+
+    const animatedColdSegmentsBelow = coldSegmentsBelow.map(seg => ({
+      key: seg.key,
+      name: seg.name,
+      data: seg.points.map(pt => {
+        const h_final = pt.h - seg.shift + offset;
+        const t_final = pt.t;
+        const h_gcc = pt.h - hPinchHot;
+        const t_gcc = pt.t - dTmin / 2;
+        return {
+          h: Math.round((h_gcc + fHoriz * (h_final - h_gcc)) * 10) / 10,
+          t: Math.round((t_gcc + fVert * (dTmin / 2)) * 10) / 10
+        };
+      })
+    }));
+
+    // 8. Compute Gaps (Animate their horizontal bounds and temperatures)
+    const heatingGaps: { t: number; q: number; hStart: number; hEnd: number; opacity: number }[] = [];
     for (let j = 0; j < pinchIdx; j++) {
       const q = shiftsAbove[j] - shiftsAbove[j + 1];
       if (q > 0.05) {
         const t_hot = temps[j] + dTmin / 2;
         const h_aligned = interpolateH(hot, t_hot);
-        const hStart = h_aligned + shiftsAbove[j + 1];
-        const hEnd = h_aligned + shiftsAbove[j];
-        heatingGapsRaw.push({ t: t_hot, q, hStart, hEnd });
+        const hStart_final = h_aligned + shiftsAbove[j + 1] + offset;
+        const hEnd_final = h_aligned + shiftsAbove[j] + offset;
+        
+        const hStart_gcc = h_aligned - hPinchCold;
+        const hEnd_gcc = h_aligned - hPinchCold;
+        const t_gcc = t_hot;
+
+        heatingGaps.push({
+          t: Math.round((t_gcc - fVert * (dTmin / 2)) * 10) / 10,
+          q: Math.round(q * 10) / 10,
+          hStart: Math.round((hStart_gcc + fHoriz * (hStart_final - hStart_gcc)) * 10) / 10,
+          hEnd: Math.round((hEnd_gcc + fHoriz * (hEnd_final - hEnd_gcc)) * 10) / 10,
+          opacity: fOpacity
+        });
       }
     }
 
-    // Compute Cooling Gaps (Below Pinch)
-    const coolingGapsRaw: { t: number; q: number; hStart: number; hEnd: number }[] = [];
+    const coolingGaps: { t: number; q: number; hStart: number; hEnd: number; opacity: number }[] = [];
     for (let j = pinchIdx + 1; j < temps.length; j++) {
       const q = shiftsBelow[j - pinchIdx] - shiftsBelow[j - 1 - pinchIdx];
       if (q > 0.05) {
         const t_cold = temps[j] - dTmin / 2;
         const h_aligned = interpolateH(aligned, t_cold);
-        const hStart = h_aligned - shiftsBelow[j - pinchIdx];
-        const hEnd = h_aligned - shiftsBelow[j - 1 - pinchIdx];
-        coolingGapsRaw.push({ t: t_cold, q, hStart, hEnd });
+        const hStart_final = h_aligned - shiftsBelow[j - pinchIdx] + offset;
+        const hEnd_final = h_aligned - shiftsBelow[j - 1 - pinchIdx] + offset;
+        
+        const hStart_gcc = h_aligned - hPinchHot;
+        const hEnd_gcc = h_aligned - hPinchHot;
+        const t_gcc = t_cold;
+
+        coolingGaps.push({
+          t: Math.round((t_gcc + fVert * (dTmin / 2)) * 10) / 10,
+          q: Math.round(q * 10) / 10,
+          hStart: Math.round((hStart_gcc + fHoriz * (hStart_final - hStart_gcc)) * 10) / 10,
+          hEnd: Math.round((hEnd_gcc + fHoriz * (hEnd_final - hEnd_gcc)) * 10) / 10,
+          opacity: fOpacity
+        });
       }
     }
 
-    // Apply offset to all datasets
-    const applyOffset = (data: { h: number; t: number }[]) => data.map(pt => ({
-      h: Math.round((pt.h + offset) * 10) / 10,
-      t: Math.round(pt.t * 10) / 10
-    }));
-
-    const applyOffsetToGaps = (gaps: typeof heatingGapsRaw) => gaps.map(g => ({
-      t: Math.round(g.t * 10) / 10,
-      q: Math.round(g.q * 10) / 10,
-      hStart: Math.round((g.hStart + offset) * 10) / 10,
-      hEnd: Math.round((g.hEnd + offset) * 10) / 10
-    }));
+    const pinchH = fHoriz * (hPinchHot + offset);
 
     return {
-      hotSegmentsAbove: hotSegmentsAbove.map(seg => ({ ...seg, data: applyOffset(seg.data) })),
-      coldSegmentsBelow: coldSegmentsBelow.map(seg => ({ ...seg, data: applyOffset(seg.data) })),
-      coldAbovePinchSteady: applyOffset(coldAbovePinchSteady),
-      hotBelowPinchSteady: applyOffset(hotBelowPinchSteady),
-      heatingGaps: applyOffsetToGaps(heatingGapsRaw),
-      coolingGaps: applyOffsetToGaps(coolingGapsRaw),
+      hotSegmentsAbove: animatedHotSegmentsAbove,
+      coldSegmentsBelow: animatedColdSegmentsBelow,
+      coldAbovePinchSteady: animatedColdAbovePinchSteady,
+      hotBelowPinchSteady: animatedHotBelowPinchSteady,
+      heatingGaps,
+      coolingGaps,
       offset,
-      pinchH: Math.round((hPinchHot + offset) * 10) / 10
+      pinchH: Math.round(pinchH * 10) / 10
     };
-  }, [results, dTmin]);
+  }, [results, dTmin, hPinch, step6TransitionFactors]);
 
   const step6FaintHot = useMemo(() => {
     return results.hotComposite.map(pt => ({
@@ -765,27 +1100,36 @@ function App() {
     { title: 'Pinch Alignment', desc: 'Shift the cold curve to satisfy the minimum approach temperature (ΔTmin)' },
     { title: 'Interval Shifts & Heat Cascade', desc: 'Shift temperatures by ΔTmin/2 to calculate interval heat balances' },
     { title: 'Grand Composite Curve', desc: 'Map utility placements against the GCC' },
-    { title: 'Balanced Composite Curves', desc: 'Keep cold curve above pinch steady and hot curve below pinch steady, leaving utility gaps' }
+    { title: 'Balanced Composite Curves', desc: 'Keep cold curve above pinch steady and hot curve below pinch steady, leaving utility gaps' },
+    { title: 'Heat Pump Integration', desc: 'Integrate a heat pump onto the Grand Composite Curve' }
   ];
 
   // Find min/max temperature for stable Y domain
   const tempDomain = useMemo(() => {
     if (streams.length === 0) return [0, 200];
     const temps = streams.flatMap(s => [s.tempIn, s.tempOut]);
-    const minT = Math.min(...temps);
-    const maxT = Math.max(...temps);
+    let minT = Math.min(...temps);
+    let maxT = Math.max(...temps);
+    if (activeStep === 6) {
+      minT = Math.min(minT, hpData.tEvapIn);
+      maxT = Math.max(maxT, hpData.tCondOut);
+    }
     const pad = Math.max((maxT - minT) * 0.1, 10);
     return [Math.max(0, Math.floor(minT - pad)), Math.ceil(maxT + pad)];
-  }, [streams]);
+  }, [streams, activeStep, hpData.tEvapIn, hpData.tCondOut]);
 
   // Find max enthalpy for stable X domain
   const enthalpyDomain = useMemo(() => {
+    if (activeStep === 6) {
+      const maxVal = Math.max(results.qhMin, results.qcMin);
+      return [0, Math.max(maxVal, 10)];
+    }
     let maxH = Math.max(stats.totalHotLoad, stats.totalColdLoad + results.qhMin, 100);
     if (activeStep === 5 && gccTransitionProgress === 0) {
       maxH += step6Data.offset;
     }
     return [0, Math.ceil(maxH * 1.05)];
-  }, [stats.totalHotLoad, stats.totalColdLoad, results.qhMin, activeStep, gccTransitionProgress, step6Data.offset]);
+  }, [stats.totalHotLoad, stats.totalColdLoad, results.qhMin, results.qcMin, activeStep, gccTransitionProgress, step6Data.offset]);
 
   return (
     <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-slate-950 text-slate-100 font-sans flex flex-col antialiased">
@@ -1423,6 +1767,179 @@ function App() {
                   </div>
                 </div>
               )}
+
+              {/* STEP 7: Heat Pump Integration */}
+              {activeStep === 6 && (
+                <div className="space-y-4">
+                  <p className="text-xs text-slate-400">
+                    Integrate a closed-cycle heat pump onto the Grand Composite Curve. 
+                    The heat pump evaporator absorbs heat from the process hot streams (below the pinch), and the condenser releases heat to the cold streams (above the pinch).
+                  </p>
+
+                  {/* HP Sliders Card */}
+                  <div className="bg-slate-900/30 border border-slate-850 p-4 rounded-xl space-y-4">
+                    <h4 className="font-bold text-xs text-cyan-400 uppercase tracking-wider flex items-center space-x-1">
+                      <Sliders className="w-3.5 h-3.5" />
+                      <span>Heat Pump Design Parameters</span>
+                    </h4>
+
+                    {/* Heating Capacity */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-400">HP Heating Capacity (Q_cond)</span>
+                        <span className="text-white font-mono font-bold">{hpCapacity} kW</span>
+                      </div>
+                      <input 
+                        type="range"
+                        min="0"
+                        max={Math.max(Math.round(results.qhMin * 10) / 10, 10)}
+                        step="1"
+                        value={hpCapacity}
+                        onChange={(e) => setHpCapacity(Number(e.target.value))}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                      />
+                      <span className="text-[10px] text-slate-500 block font-medium">Maximum capacity capped at target heating utility target ({Math.round(results.qhMin * 10) / 10} kW).</span>
+                    </div>
+
+                    {/* Condenser Glide */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-400">Condenser Delta T (Glide)</span>
+                        <span className="text-white font-mono font-bold">{hpCondGlide}°C</span>
+                      </div>
+                      <input 
+                        type="range"
+                        min="5"
+                        max="30"
+                        step="1"
+                        value={hpCondGlide}
+                        onChange={(e) => setHpCondGlide(Number(e.target.value))}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                      />
+                    </div>
+
+                    {/* Evaporator Glide */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-400">Evaporator Delta T (Glide)</span>
+                        <span className="text-white font-mono font-bold">{hpEvapGlide}°C</span>
+                      </div>
+                      <input 
+                        type="range"
+                        min="5"
+                        max="30"
+                        step="1"
+                        value={hpEvapGlide}
+                        onChange={(e) => setHpEvapGlide(Number(e.target.value))}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                      />
+                    </div>
+                  </div>
+
+                  {/* HP Input Boxes (Economic & Carnot Parameters) */}
+                  <div className="bg-slate-900/30 border border-slate-850 p-4 rounded-xl space-y-3">
+                    <h4 className="font-bold text-xs text-cyan-400 uppercase tracking-wider flex items-center space-x-1.5">
+                      <span>💰 Economic & Efficiency Inputs</span>
+                    </h4>
+                    <div className="grid grid-cols-3 gap-3 text-[11px]">
+                      <div>
+                        <label className="block text-slate-500 mb-1">Gas Price (€/MWh)</label>
+                        <input 
+                          type="number"
+                          value={gasPrice}
+                          min="0"
+                          step="5"
+                          onChange={(e) => setGasPrice(Math.max(0, Number(e.target.value)))}
+                          className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-white w-full focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-500 mb-1">Electricity Price (€/MWh)</label>
+                        <input 
+                          type="number"
+                          value={electricityPrice}
+                          min="0"
+                          step="10"
+                          onChange={(e) => setElectricityPrice(Math.max(0, Number(e.target.value)))}
+                          className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-white w-full focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-500 mb-1">Carnot Efficiency (%)</label>
+                        <input 
+                          type="number"
+                          value={Math.round(carnotEfficiency * 100)}
+                          min="10"
+                          max="95"
+                          step="5"
+                          onChange={(e) => setCarnotEfficiency(Math.min(95, Math.max(10, Number(e.target.value))) / 100)}
+                          className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-white w-full focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* HP Summary Cards */}
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="bg-slate-900/20 border border-slate-800 rounded-xl p-3 space-y-1 flex flex-col justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider block">Heat Pump Performance</span>
+                        <div className="space-y-0.5 font-mono text-[11px] text-slate-350 mt-1">
+                          <div className="flex justify-between">
+                            <span>COP:</span>
+                            <span className="font-bold text-cyan-400">{hpData.cop}</span>
+                          </div>
+                          <div className="flex justify-between text-[10px] text-slate-500">
+                            <span>Carnot COP:</span>
+                            <span>{hpData.carnotCop}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Compressor Power:</span>
+                            <span className="text-white font-bold">{hpData.compressorPower} kW</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Evaporator Cooling:</span>
+                            <span className="text-blue-400 font-bold">{hpData.qEvap} kW</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/20 border border-slate-800 rounded-xl p-3 space-y-1 flex flex-col justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider block">Operating Cost Savings</span>
+                        <div className="space-y-0.5 font-mono text-[11px] text-slate-350 mt-1">
+                          <div className="flex justify-between">
+                            <span>Hourly Savings:</span>
+                            <span className={`font-bold ${hpData.hourlySavings >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {hpData.hourlySavings >= 0 ? '+' : ''}{hpData.hourlySavings} €/h
+                            </span>
+                          </div>
+                          <div className="flex justify-between mt-1 pt-1 border-t border-slate-800/60">
+                            <span>Annual Savings:</span>
+                            <span className={`font-bold text-sm ${hpData.annualSavings >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {hpData.annualSavings >= 0 ? '+' : ''}{hpData.annualSavings.toLocaleString()} €/yr
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[9px] text-slate-500 block text-right mt-1">(Assuming 8,000 h/yr)</span>
+                    </div>
+                  </div>
+
+                  {/* Glide Temperature Info */}
+                  <div className="bg-slate-950 border border-slate-900 rounded-xl p-3 text-[11px] font-mono text-slate-400 space-y-1">
+                    <div className="flex justify-between">
+                      <span>Condenser Temp:</span>
+                      <span className="text-slate-200">{hpData.tCondIn}°C → {hpData.tCondOut}°C</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Evaporator Temp:</span>
+                      <span className="text-slate-200">{hpData.tEvapIn}°C → {hpData.tEvapOut}°C</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1450,9 +1967,11 @@ function App() {
                               ? gccTransitionProgress === 0
                                 ? "Balanced Composite Curves (T-H Diagram)"
                                 : "Returning to Composite Curves"
-                              : gccTransitionProgress === 1
-                                ? "Grand Composite Curve (Shifted T vs H)"
-                                : "Transitioning to Grand Composite Curve"
+                              : activeStep === 6
+                                ? "Heat Pump Integration (Shifted GCC)"
+                                : gccTransitionProgress === 1
+                                  ? "Grand Composite Curve (Shifted T vs H)"
+                                  : "Transitioning to Grand Composite Curve"
                     }
                   </h3>
                   <p className="text-[10px] text-slate-500">
@@ -1468,14 +1987,38 @@ function App() {
                               ? gccTransitionProgress === 0
                                 ? "Hot/Cold composites with horizontal gaps representing heat deficits/surpluses"
                                 : "Transitioning back to composite view..."
-                              : gccTransitionProgress === 1
-                                ? "Net heat flow cascade profile. Zero point is the Pinch."
-                                : "Aligning horizontal intervals to zero enthalpy..."
+                              : activeStep === 6
+                                ? "Utility-side temperatures (shifted by ±ΔTmin/2) showing HP placement"
+                                : gccTransitionProgress === 1
+                                  ? "Net heat flow cascade profile. Zero point is the Pinch."
+                                  : "Aligning horizontal intervals to zero enthalpy..."
                     }
                   </p>
                 </div>
                 <div className="flex items-center space-x-3 text-[10px] font-mono">
-                  {activeStep === 4 && gccTransitionProgress === 1 ? (
+                  {activeStep === 6 ? (
+                    <div className="flex items-center space-x-3 flex-wrap gap-y-1 justify-end">
+                      <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-mono px-2 py-0.5 rounded">
+                        Pinch: {results.pinchTempShifted}°C
+                      </span>
+                      <span className="flex items-center space-x-1">
+                        <span className="w-2.5 h-0.5 bg-blue-500 inline-block"></span>
+                        <span className="text-slate-400">Cold GCC (+ΔTmin/2)</span>
+                      </span>
+                      <span className="flex items-center space-x-1">
+                        <span className="w-2.5 h-0.5 bg-red-500 inline-block"></span>
+                        <span className="text-slate-400">Hot GCC (-ΔTmin/2)</span>
+                      </span>
+                      <span className="flex items-center space-x-1">
+                        <span className="w-2.5 h-1 bg-red-500 inline-block"></span>
+                        <span className="text-red-400 font-bold">Condenser</span>
+                      </span>
+                      <span className="flex items-center space-x-1">
+                        <span className="w-2.5 h-1 bg-blue-500 inline-block"></span>
+                        <span className="text-blue-400 font-bold">Evaporator</span>
+                      </span>
+                    </div>
+                  ) : activeStep === 4 && gccTransitionProgress === 1 ? (
                     <div className="flex items-center space-x-3">
                       <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-mono px-2 py-0.5 rounded">
                         Pinch: {results.pinchTempShifted}°C
@@ -1539,7 +2082,7 @@ function App() {
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
-                      margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
+                      margin={{ top: 10, right: activeStep === 6 ? 15 : 10, left: -20, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                       <XAxis 
@@ -1551,33 +2094,115 @@ function App() {
                         unit=" kW"
                       />
                       <YAxis 
+                        yAxisId="left"
                         type="number" 
                         domain={tempDomain}
                         tick={{ fill: '#64748b', fontSize: 10 }}
                         stroke="#334155"
                         unit="°C"
                       />
+                      {activeStep === 6 && (
+                        <YAxis 
+                          yAxisId="right"
+                          orientation="right"
+                          type="number" 
+                          domain={['auto', 'auto']}
+                          tick={{ fill: '#4ade80', fontSize: 10 }}
+                          stroke="#22c55e"
+                          unit=" €/h"
+                        />
+                      )}
                       <Tooltip
-                        contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px' }}
-                        labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-                        itemStyle={{ color: '#f8fafc', fontSize: 12 }}
-                        formatter={(value, name, item) => {
-                          if (activeStep === 4 && gccTransitionProgress === 1) {
-                            return [`${value}°C`, 'Shifted Temp'];
+                        content={({ active, payload, label }) => {
+                          if (!active || label === undefined || label === null) return null;
+                          
+                          // Custom tooltip for Step 7 showing all interpolated curve values
+                          if (activeStep === 6) {
+                            const hVal = Number(label);
+                            const tColdGcc = interpolateT(hpData.plottedGccAbove, hVal, true);
+                            const tHotGcc = interpolateT(hpData.plottedGccBelow, hVal, false);
+                            
+                            const showCondenser = hVal >= -1e-5 && hVal <= hpCapacity + 1e-5;
+                            const tCondenser = showCondenser 
+                              ? hpData.tCondIn + (hpCapacity > 1e-5 ? (hVal / hpCapacity) * hpCondGlide : 0)
+                              : null;
+                              
+                            const showEvaporator = hVal >= -1e-5 && hVal <= hpData.qEvap + 1e-5;
+                            const tEvaporator = showEvaporator
+                              ? hpData.tEvapIn - (hpData.qEvap > 1e-5 ? (hVal / hpData.qEvap) * hpEvapGlide : 0)
+                              : null;
+
+                            const res = calculateSavingsForCapacity(hVal);
+                            
+                            return (
+                              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 shadow-2xl text-xs font-mono space-y-2">
+                                <div className="text-slate-500 font-bold border-b border-slate-900 pb-1 flex justify-between items-center">
+                                  <span>Enthalpy (H):</span>
+                                  <span className="text-white">{Math.round(hVal * 10) / 10} kW</span>
+                                </div>
+                                <div className="space-y-1">
+                                  {tColdGcc !== undefined && (
+                                    <div className="flex justify-between space-x-6">
+                                      <span className="text-blue-400">Cold GCC (+ΔTmin/2):</span>
+                                      <span className="text-white font-bold">{Math.round(tColdGcc * 10) / 10}°C</span>
+                                    </div>
+                                  )}
+                                  {tHotGcc !== undefined && (
+                                    <div className="flex justify-between space-x-6">
+                                      <span className="text-red-400">Hot GCC (-ΔTmin/2):</span>
+                                      <span className="text-white font-bold">{Math.round(tHotGcc * 10) / 10}°C</span>
+                                    </div>
+                                  )}
+                                  {tCondenser !== null && (
+                                    <div className="flex justify-between space-x-6">
+                                      <span className="text-red-500 font-semibold">Condenser:</span>
+                                      <span className="text-white font-bold">{Math.round(tCondenser * 10) / 10}°C</span>
+                                    </div>
+                                  )}
+                                  {tEvaporator !== null && (
+                                    <div className="flex justify-between space-x-6">
+                                      <span className="text-blue-500 font-semibold">Evaporator:</span>
+                                      <span className="text-white font-bold">{Math.round(tEvaporator * 10) / 10}°C</span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between space-x-6 border-t border-slate-900 pt-1 mt-1">
+                                    <span className="text-green-400">Savings at this capacity:</span>
+                                    <span className="text-white font-bold">{res.savings.toFixed(2)} €/h</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
                           }
-                          if (activeStep === 0) {
-                            const stream = streams.find(s => s.name === name || s.id === item.dataKey);
-                            const label = stream ? `${stream.name} (${stream.type === 'hot' ? 'Hot' : 'Cold'})` : String(name);
-                            return [`${value}°C`, label];
-                          } else {
-                            return [`${value}°C`, String(name)];
-                          }
+                          
+                          // Default tooltip layout for other steps
+                          return (
+                            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 shadow-2xl text-xs space-y-1.5">
+                              <div className="text-slate-500 font-mono font-semibold border-b border-slate-900 pb-1">
+                                Enthalpy: {Math.round(Number(label) * 10) / 10} kW
+                              </div>
+                              {payload && payload.map((p: any, idx: number) => {
+                                let name = p.name;
+                                let val = p.value;
+                                if (activeStep === 0) {
+                                  const stream = streams.find(s => s.name === name || s.id === p.dataKey);
+                                  name = stream ? `${stream.name} (${stream.type === 'hot' ? 'Hot' : 'Cold'})` : String(name);
+                                }
+                                return (
+                                  <div key={idx} className="flex justify-between space-x-6 text-slate-200">
+                                    <span style={{ color: p.stroke }}>{name}:</span>
+                                    <span className="font-mono font-bold">{val}°C</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
                         }}
                       />
                       
-                      {/* Hot Composite Curve (Fades out when transitioning to GCC or in Step 6) */}
-                      {activeStep >= 1 && !(activeStep === 5 && gccTransitionProgress === 0) && (
+                      {/* Hot Composite Curve (Fades out when transitioning to GCC, or hidden in Step 6 & 7) */}
+                      {activeStep >= 1 && activeStep <= 4 && !(activeStep === 5 && gccTransitionProgress === 0) && (
                         <Line 
+                          yAxisId="left"
                           data={hotCompositeData}
                           type="linear" 
                           dataKey="t" 
@@ -1596,9 +2221,10 @@ function App() {
                         />
                       )}
 
-                      {/* Cold Composite Curve / Transitioning GCC (Blue curve, hidden when split GCC is shown and when sliced cold/hot curves are shown in Step 6) */}
-                      {!(activeStep === 4 && gccTransitionProgress === 1) && !(activeStep === 5 && gccTransitionProgress === 0) && (
+                      {/* Cold Composite Curve / Transitioning GCC (Blue curve, hidden when split GCC is shown, and in Step 6 & 7) */}
+                      {activeStep < 6 && !(activeStep === 4 && gccTransitionProgress === 1) && !(activeStep === 5 && gccTransitionProgress === 0) && (
                         <Line 
+                          yAxisId="left"
                           data={unifiedColdData}
                           type="linear" 
                           dataKey="t" 
@@ -1616,6 +2242,7 @@ function App() {
                       {/* Step 6: Faint Hot Composite Reference Line */}
                       {activeStep === 5 && gccTransitionProgress === 0 && (
                         <Line 
+                          yAxisId="left"
                           data={step6FaintHot}
                           type="linear" 
                           dataKey="t" 
@@ -1633,6 +2260,7 @@ function App() {
                       {/* Step 6: Faint Cold Composite Reference Line */}
                       {activeStep === 5 && gccTransitionProgress === 0 && (
                         <Line 
+                          yAxisId="left"
                           data={step6FaintCold}
                           type="linear" 
                           dataKey="t" 
@@ -1650,6 +2278,7 @@ function App() {
                       {/* Step 6: Steady Cold Curve (Above Pinch) */}
                       {activeStep === 5 && gccTransitionProgress === 0 && (
                         <Line 
+                          yAxisId="left"
                           data={step6Data.coldAbovePinchSteady}
                           type="linear" 
                           dataKey="t" 
@@ -1666,6 +2295,7 @@ function App() {
                       {/* Step 6: Steady Hot Curve (Below Pinch) */}
                       {activeStep === 5 && gccTransitionProgress === 0 && (
                         <Line 
+                          yAxisId="left"
                           data={step6Data.hotBelowPinchSteady}
                           type="linear" 
                           dataKey="t" 
@@ -1683,6 +2313,7 @@ function App() {
                       {activeStep === 5 && gccTransitionProgress === 0 && step6Data.hotSegmentsAbove.map((seg) => (
                         <Line 
                           key={seg.key}
+                          yAxisId="left"
                           data={seg.data}
                           type="linear" 
                           dataKey="t" 
@@ -1700,6 +2331,7 @@ function App() {
                       {activeStep === 5 && gccTransitionProgress === 0 && step6Data.coldSegmentsBelow.map((seg) => (
                         <Line 
                           key={seg.key}
+                          yAxisId="left"
                           data={seg.data}
                           type="linear" 
                           dataKey="t" 
@@ -1717,6 +2349,7 @@ function App() {
                       {activeStep === 4 && gccTransitionProgress === 1 && (
                         <>
                           <Line 
+                            yAxisId="left"
                             data={gccAbovePinch}
                             type="linear" 
                             dataKey="tShifted" 
@@ -1729,6 +2362,7 @@ function App() {
                             isAnimationActive={false}
                           />
                           <Line 
+                            yAxisId="left"
                             data={gccBelowPinch}
                             type="linear" 
                             dataKey="tShifted" 
@@ -1737,6 +2371,92 @@ function App() {
                             strokeWidth={2.5}
                             dot={{ r: 3, stroke: '#b91c1c', strokeWidth: 1 }}
                             activeDot={{ r: 5 }}
+                            connectNulls
+                            isAnimationActive={false}
+                          />
+                        </>
+                      )}
+
+                      {/* Step 7 Heat Pump Integration curves */}
+                      {activeStep === 6 && (
+                        <>
+                          {/* Shifted GCC Above Pinch (Utility Cold Boundary, Blue) */}
+                          <Line 
+                            yAxisId="left"
+                            data={hpData.plottedGccAbove}
+                            type="linear" 
+                            dataKey="t" 
+                            name="Cold GCC (Utility boundary)"
+                            stroke="#3b82f6" 
+                            strokeWidth={2.5}
+                            dot={{ r: 3, stroke: '#1d4ed8', strokeWidth: 1 }}
+                            activeDot={{ r: 5 }}
+                            connectNulls
+                            isAnimationActive={false}
+                          />
+
+                          {/* Shifted GCC Below Pinch (Utility Hot Boundary, Red) */}
+                          <Line 
+                            yAxisId="left"
+                            data={hpData.plottedGccBelow}
+                            type="linear" 
+                            dataKey="t" 
+                            name="Hot GCC (Utility boundary)"
+                            stroke="#ef4444" 
+                            strokeWidth={2.5}
+                            dot={{ r: 3, stroke: '#b91c1c', strokeWidth: 1 }}
+                            activeDot={{ r: 5 }}
+                            connectNulls
+                            isAnimationActive={false}
+                          />
+
+                          {/* HP Condenser Heating Line (Red, thick) */}
+                          <Line 
+                            yAxisId="left"
+                            data={[
+                              { h: 0, t: hpData.tCondIn },
+                              { h: hpCapacity, t: hpData.tCondOut }
+                            ]}
+                            type="linear" 
+                            dataKey="t" 
+                            name="Condenser (Heating)"
+                            stroke="#dc2626" 
+                            strokeWidth={4.5}
+                            dot={{ r: 4, stroke: '#991b1b', strokeWidth: 1.5 }}
+                            activeDot={{ r: 6 }}
+                            connectNulls
+                            isAnimationActive={false}
+                          />
+
+                          {/* HP Evaporator Cooling Line (Blue, thick) */}
+                          <Line 
+                            yAxisId="left"
+                            data={[
+                              { h: 0, t: hpData.tEvapIn },
+                              { h: hpData.qEvap, t: hpData.tEvapOut }
+                            ]}
+                            type="linear" 
+                            dataKey="t" 
+                            name="Evaporator (Cooling)"
+                            stroke="#2563eb" 
+                            strokeWidth={4.5}
+                            dot={{ r: 4, stroke: '#1e40af', strokeWidth: 1.5 }}
+                            activeDot={{ r: 6 }}
+                            connectNulls
+                            isAnimationActive={false}
+                          />
+
+                          {/* Hourly Savings Curve (Green, plotted on right axis) */}
+                          <Line 
+                            yAxisId="right"
+                            data={savingsCurveData}
+                            type="monotone" 
+                            dataKey="savings" 
+                            name="Hourly Savings"
+                            stroke="#22c55e" 
+                            strokeWidth={2.5}
+                            dot={false}
+                            activeDot={{ r: 4 }}
                             connectNulls
                             isAnimationActive={false}
                           />
@@ -1775,6 +2495,7 @@ function App() {
                         return (
                           <Line 
                             key={s.id}
+                            yAxisId="left"
                             data={lineData}
                             type="linear" 
                             dataKey="t" 
@@ -1833,6 +2554,7 @@ function App() {
                       {/* Step 3 Horizontal Utility Lines (only in Step 3, not in Step 6 as gaps represent utilities) */}
                       {activeStep === 2 && tColdMin !== undefined && results.qcMin > 0 && (
                         <ReferenceLine 
+                          yAxisId="left"
                           segment={[{ x: 0, y: tColdMin }, { x: results.qcMin, y: tColdMin }]}
                           stroke="#3b82f6" 
                           strokeDasharray="4 4"
@@ -1848,6 +2570,7 @@ function App() {
                       )}
                       {activeStep === 2 && tColdMax !== undefined && hHotMax !== undefined && hColdMax !== undefined && results.qhMin > 0 && (
                         <ReferenceLine 
+                          yAxisId="left"
                           segment={[{ x: hHotMax, y: tColdMax }, { x: hColdMax, y: tColdMax }]}
                           stroke="#ef4444" 
                           strokeDasharray="4 4"
@@ -1906,6 +2629,7 @@ function App() {
                         return (
                           <ReferenceLine 
                             key={`interval-line-${idx}`}
+                            yAxisId="left"
                             segment={[
                               { x: xStart, y: tVal + (1 - tempShiftProgress) * (dTmin / 2) },
                               { x: xEnd, y: tVal - (1 - tempShiftProgress) * (dTmin / 2) }
@@ -1923,6 +2647,7 @@ function App() {
                       {activeStep === 5 && gccTransitionProgress === 0 && step6Data.heatingGaps.map((gap, idx) => (
                         <ReferenceLine 
                           key={`heating-gap-line-${idx}`}
+                          yAxisId="left"
                           segment={[
                             { x: gap.hStart, y: gap.t },
                             { x: gap.hEnd, y: gap.t }
@@ -1930,6 +2655,7 @@ function App() {
                           stroke="#ef4444"
                           strokeDasharray="4 4"
                           strokeWidth={2}
+                          opacity={gap.opacity}
                           label={{ 
                             value: `${gap.q} kW @ ${gap.t}°C`, 
                             fill: '#ef4444', 
@@ -1944,6 +2670,7 @@ function App() {
                       {activeStep === 5 && gccTransitionProgress === 0 && step6Data.coolingGaps.map((gap, idx) => (
                         <ReferenceLine 
                           key={`cooling-gap-line-${idx}`}
+                          yAxisId="left"
                           segment={[
                             { x: gap.hStart, y: gap.t },
                             { x: gap.hEnd, y: gap.t }
@@ -1951,6 +2678,7 @@ function App() {
                           stroke="#3b82f6"
                           strokeDasharray="4 4"
                           strokeWidth={2}
+                          opacity={gap.opacity}
                           label={{ 
                             value: `${gap.q} kW @ ${gap.t}°C`, 
                             fill: '#3b82f6', 
@@ -1965,11 +2693,12 @@ function App() {
                       {(activeStep === 2 || (activeStep === 5 && gccTransitionProgress === 0)) && closestApproach.hClosest !== undefined && (
                         <>
                           <ReferenceLine 
+                            yAxisId="left"
                             segment={
                               activeStep === 5 && gccTransitionProgress === 0
                                 ? [
-                                    { x: step6Data.pinchH, y: results.pinchTempCold },
-                                    { x: step6Data.pinchH, y: results.pinchTempHot }
+                                    { x: step6Data.pinchH, y: results.pinchTempShifted - step6TransitionFactors.fVert * (dTmin / 2) },
+                                    { x: step6Data.pinchH, y: results.pinchTempShifted + step6TransitionFactors.fVert * (dTmin / 2) }
                                   ]
                                 : [
                                     { x: closestApproach.hClosest, y: closestApproach.tColdClosest },
@@ -1988,16 +2717,18 @@ function App() {
                             }}
                           />
                           <ReferenceDot 
+                            yAxisId="left"
                             x={activeStep === 5 && gccTransitionProgress === 0 ? step6Data.pinchH : closestApproach.hClosest} 
-                            y={activeStep === 5 && gccTransitionProgress === 0 ? results.pinchTempHot : closestApproach.tHotClosest} 
+                            y={activeStep === 5 && gccTransitionProgress === 0 ? results.pinchTempShifted + step6TransitionFactors.fVert * (dTmin / 2) : closestApproach.tHotClosest} 
                             r={4.5} 
                             fill="#ef4444" 
                             stroke="#f59e0b" 
                             strokeWidth={1.5}
                           />
                           <ReferenceDot 
+                            yAxisId="left"
                             x={activeStep === 5 && gccTransitionProgress === 0 ? step6Data.pinchH : closestApproach.hClosest} 
-                            y={activeStep === 5 && gccTransitionProgress === 0 ? results.pinchTempCold : closestApproach.tColdClosest} 
+                            y={activeStep === 5 && gccTransitionProgress === 0 ? results.pinchTempShifted - step6TransitionFactors.fVert * (dTmin / 2) : closestApproach.tColdClosest} 
                             r={4.5} 
                             fill="#3b82f6" 
                             stroke="#f59e0b" 
@@ -2009,6 +2740,7 @@ function App() {
                       {/* Reference lines for the Pinch temperature (Step 5 only, fades in) */}
                       {activeStep === 4 && !isNaN(results.pinchTempShifted) && (
                         <ReferenceLine 
+                          yAxisId="left"
                           y={results.pinchTempShifted} 
                           stroke="#f59e0b" 
                           strokeDasharray="4 4" 
@@ -2020,6 +2752,7 @@ function App() {
                       {/* Highlight hot and cold utility points (Step 5 only, fades in) */}
                       {activeStep === 4 && results.shiftedTemps.length > 0 && !isNaN(results.shiftedTemps[0]) && (
                         <ReferenceDot 
+                          yAxisId="left"
                           x={results.qhMin} 
                           y={results.shiftedTemps[0]} 
                           r={5} 
@@ -2030,6 +2763,7 @@ function App() {
                       )}
                       {activeStep === 4 && results.shiftedTemps.length > 0 && !isNaN(results.shiftedTemps[results.shiftedTemps.length - 1]) && (
                         <ReferenceDot 
+                          yAxisId="left"
                           x={results.qcMin} 
                           y={results.shiftedTemps[results.shiftedTemps.length - 1]} 
                           r={5} 

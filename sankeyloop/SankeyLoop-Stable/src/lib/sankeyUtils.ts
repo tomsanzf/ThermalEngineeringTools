@@ -8,6 +8,12 @@ export function hexToRgb(hex: string) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+export function parseFlowValue(val: string | number | undefined): number {
+  if (val === undefined || val === null) return NaN;
+  const cleaned = String(val).replace(/\s/g, '').replace(',', '.');
+  return parseFloat(cleaned);
+}
+
 export function interpolateRgb(v: number, minV: number, maxV: number, col1: string, col2: string, opacity: number) {
   if (maxV === minV) {
     const [r, g, b] = hexToRgb(col1);
@@ -61,7 +67,7 @@ export function buildSankeyData(flows: Flow[], cfg: Config) {
     let source = String(row.Source || '').trim();
     let target = String(row.Target || '').trim();
     if (!source || !target) return;
-    const parsed = parseFloat(String(row.Value || '').replace(',', '.'));
+    const parsed = parseFlowValue(row.Value);
     if (isNaN(parsed)) {
       warnings.push(`⚠️ Cannot parse value "${row.Value}" for ${source} → ${target}`);
       return;
@@ -484,7 +490,7 @@ export function getNodeLabel(
       let target = String(flow.Target || '').trim();
       if (!source || !target) return;
       
-      let val = parseFloat(String(flow.Value || '').replace(',', '.')) || 0;
+      let val = parseFlowValue(flow.Value) || 0;
       if (val < 0) {
         [source, target, val] = [target, source, Math.abs(val)];
       }

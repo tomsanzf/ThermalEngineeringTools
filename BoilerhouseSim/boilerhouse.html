@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boiler House Efficiency Calculator</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --steam: #ef4444;
+    --gas: #ff7c2a;
+    --condensate: #fbbf24;
+    --flue: #ef4444;
+    --water: #38bdf8;
+    --power: #fbbf24;
+    --efficiency: #4ade80;
+    --boiler-fill: #1a2332;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Inter', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--gas); }
+
+  .efficiency-badge {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .eff-item {
+    text-align: right;
+  }
+  .eff-label {
+    font-size: 10px;
+    font-family: var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .eff-value {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--efficiency);
+    line-height: 1;
+  }
+  .eff-value.warn { color: #fbbf24; }
+  .eff-value.danger { color: #f87171; }
+
+  .main-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .diagram-area {
+    flex: 1;
+    overflow: hidden;
+    padding: 12px;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    min-height: 0;
+  }
+
+  .sidebar {
+    width: 280px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    flex-shrink: 0;
+    padding: 16px;
+  }
+
+  .sidebar h3 {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 8px 0 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+
+  .result-group {
+    margin-bottom: 16px;
+  }
+  .result-group-title {
+    font-size: 10px;
+    font-family: var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid #1e2530;
+  }
+  .result-name {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .result-val {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .result-val.steam { color: #ef4444; }
+  .result-val.gas { color: var(--gas); }
+  .result-val.loss { color: #f87171; }
+  .result-val.ok { color: var(--efficiency); }
+  .result-val.warn { color: #fbbf24; }
+
+  /* SVG Diagram */
+  svg#diagram {
+    overflow: visible;
+  }
+
+  /* Inline input nodes */
+  .param-node {
+    cursor: pointer;
+  }
+  .param-bg {
+    fill: var(--surface2);
+    stroke: var(--border);
+    stroke-width: 1;
+    rx: 4;
+  }
+  .param-bg:hover, .param-node:hover .param-bg {
+    stroke: var(--gas);
+    stroke-width: 1.5;
+  }
+  .param-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--text-dim);
+    text-anchor: middle;
+  }
+  .param-value {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    fill: var(--text);
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+  .param-unit {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--text-dim);
+    text-anchor: middle;
+  }
+
+  /* Flow lines */
+  .flow-steam { stroke: var(--steam); }
+  .flow-gas { stroke: var(--gas); }
+  .flow-flue { stroke: var(--flue); }
+  .flow-condensate { stroke: var(--condensate); }
+  .flow-water { stroke: var(--water); }
+  .flow-blowdown { stroke: #a78bfa; }
+  .flow-air { stroke: #86efac; }
+
+  .pipe {
+    fill: none;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .pipe-dashed {
+    fill: none;
+    stroke-width: 2;
+    stroke-dasharray: 6 3;
+    stroke-linecap: round;
+  }
+  .pipe-thin {
+    fill: none;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Animated flow */
+  .animated-flow {
+    fill: none;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 8 12;
+    opacity: 0.6;
+  }
+
+  @keyframes flow-right { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+  @keyframes flow-left  { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 20; } }
+  @keyframes flow-down  { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+  @keyframes flow-up    { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 20; } }
+
+  .anim-right { animation: flow-right 0.8s linear infinite; }
+  .anim-left  { animation: flow-left 0.8s linear infinite; }
+  .anim-down  { animation: flow-down 0.8s linear infinite; }
+  .anim-up    { animation: flow-up 0.8s linear infinite; }
+
+  /* Component boxes */
+  .comp-box { fill: var(--boiler-fill); stroke: var(--border); stroke-width: 1.5; }
+  .comp-box-gas { fill: #1a1510; stroke: #5a3810; stroke-width: 1.5; }
+  .comp-label {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    fill: var(--text);
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+  .comp-sublabel {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--text-dim);
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--text-dim);
+    text-anchor: middle;
+  }
+
+  /* Floating input popup */
+  #input-popup {
+    display: none;
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--gas);
+    border-radius: 8px;
+    padding: 14px 16px;
+    z-index: 1000;
+    min-width: 220px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #input-popup.visible { display: block; }
+
+  #input-popup h4 {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .popup-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .popup-row label {
+    font-size: 11px;
+    color: var(--text-dim);
+    min-width: 80px;
+  }
+  .popup-row input, .popup-row select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 8px;
+    width: 90px;
+    outline: none;
+  }
+  .popup-row input:focus, .popup-row select:focus {
+    border-color: var(--gas);
+  }
+  .popup-row select {
+    width: 110px;
+    cursor: pointer;
+  }
+
+  .btn-toggle {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-toggle:hover { border-color: var(--gas); color: var(--gas); }
+  .btn-toggle.active { background: var(--gas); border-color: var(--gas); color: #000; font-weight: 700; }
+
+  .popup-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    float: right;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+  }
+  .popup-close:hover { color: var(--text); }
+
+  /* Economizer toggle on diagram */
+  .eco-toggle {
+    cursor: pointer;
+    user-select: none;
+  }
+  .eco-toggle-bg {
+    fill: var(--surface2);
+    stroke: var(--border);
+    stroke-width: 1;
+    rx: 10;
+  }
+  .eco-toggle-bg.on { fill: #14301a; stroke: #4ade80; }
+  .eco-toggle-text {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--text-dim);
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+  }
+  .eco-toggle-bg.on + text { fill: #4ade80; }
+
+  .loss-bar-bg { fill: #1c2128; }
+  .loss-bar-fill { fill: #f87171; }
+
+  .divider {
+    stroke: var(--border);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+  }
+
+  /* Sankey-style loss indicator */
+  .loss-arrow { fill: #f87171; opacity: 0.7; }
+  .loss-text { font-family: var(--mono); font-size: 9px; fill: #f87171; }
+
+  footer {
+    padding: 8px 24px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    background: var(--surface);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Boiler<span>House</span> · Efficiency Calculator</div>
+  <div class="efficiency-badge">
+    <div class="eff-item">
+      <div class="eff-label">Combustion η</div>
+      <div class="eff-value" id="combustion-eff">—</div>
+    </div>
+    <div class="eff-item">
+      <div class="eff-label">Boiler η</div>
+      <div class="eff-value" id="boiler-eff">—</div>
+    </div>
+    <div class="eff-item">
+      <div class="eff-label">Boilerhouse η</div>
+      <div class="eff-value" id="bh-eff">—</div>
+    </div>
+  </div>
+</header>
+
+<div class="main-layout">
+  <div class="diagram-area">
+    <svg id="diagram" width="100%" height="100%" viewBox="-4 -14 839 509" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+
+  <div class="sidebar">
+    <h3>Energy Balance</h3>
+
+    <div class="result-group">
+      <div class="result-group-title">Fuel Input</div>
+      <div class="result-row">
+        <span class="result-name">Gas power (LHV)</span>
+        <span class="result-val gas" id="r-gas-lhv">— kW</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Gas power (HHV)</span>
+        <span class="result-val gas" id="r-gas-hhv">— kW</span>
+      </div>
+    </div>
+
+    <div class="result-group">
+      <div class="result-group-title">Steam Output</div>
+      <div class="result-row">
+        <span class="result-name">Steam enthalpy flow</span>
+        <span class="result-val steam" id="r-steam-kw">— kW</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Steam mass flow</span>
+        <span class="result-val steam" id="r-steam-kg">— kg/h</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Saturation temp.</span>
+        <span class="result-val steam" id="r-steam-tsat">— °C</span>
+      </div>
+    </div>
+
+    <div class="result-group">
+      <div class="result-group-title">Losses</div>
+      <div class="result-row">
+        <span class="result-name">Flue gas loss</span>
+        <span class="result-val loss" id="r-flue-loss">— kW</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Flue gas loss %</span>
+        <span class="result-val loss" id="r-flue-pct">—%</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Blowdown loss</span>
+        <span class="result-val loss" id="r-bd-loss">— kW</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Radiation &amp; conv.</span>
+        <span class="result-val loss" id="r-rad-loss">— kW</span>
+      </div>
+    </div>
+
+    <div class="result-group">
+      <div class="result-group-title">Feed Water</div>
+      <div class="result-row">
+        <span class="result-name">Feed water temp.</span>
+        <span class="result-val ok" id="r-fw-temp">— °C</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Feed water flow</span>
+        <span class="result-val ok" id="r-fw-flow">— kg/h</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Feed water enthalpy</span>
+        <span class="result-val ok" id="r-fw-enth">— kJ/kg</span>
+      </div>
+    </div>
+
+    <div class="result-group">
+      <div class="result-group-title">Economizer</div>
+      <div class="result-row">
+        <span class="result-name">Heat recovered</span>
+        <span class="result-val ok" id="r-eco-kw">— kW</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">FW temp. gain</span>
+        <span class="result-val ok" id="r-eco-dt">— °C</span>
+      </div>
+    </div>
+
+    <div class="result-group">
+      <div class="result-group-title">Condensate</div>
+      <div class="result-row">
+        <span class="result-name">Return rate</span>
+        <span class="result-val warn" id="r-cond-pct">—%</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Makeup water</span>
+        <span class="result-val warn" id="r-makeup">— kg/h</span>
+      </div>
+      <div class="result-row">
+        <span class="result-name">Heat saved (cond.)</span>
+        <span class="result-val ok" id="r-cond-saved">— kW</span>
+      </div>
+    </div>
+
+    <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border)">
+      <div class="result-group-title" style="margin-bottom:8px">Quick Ref</div>
+      <div style="font-size:10px; color:var(--text-dim); line-height:1.7; font-family:var(--mono)">
+        O₂ → excess air by Siegert<br>
+        η_comb = 1 − q_flue/Q_fuel<br>
+        η_boiler = Q_steam/Q_fuel<br>
+        η_BH = Q_net/(Q_fuel + W_pump)
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="input-popup">
+  <button class="popup-close" onclick="closePopup()">×</button>
+  <h4 id="popup-title">Parameter</h4>
+  <div id="popup-content"></div>
+</div>
+
+<footer>
+  <span>Click any value on the diagram to edit · All calculations based on ASME PTC 4 / EN 12952</span>
+  <span id="footer-status" style="color:var(--efficiency)">Ready</span>
+</footer>
+
+<script>
+// ─── STATE ────────────────────────────────────────────────────────────────────
+const S = {
+  // Fuel
+  gasFlowRate: 100,       // Nm³/h
+  gasInputMode: 'volume', // 'volume' | 'lhv' | 'hhv'
+  gasInputValue: 100,
+  gasHHV: 11.63,          // kWh/Nm³ (natural gas ~39.5 MJ/Nm³)
+  gasLHV: 10.35,          // kWh/Nm³ (natural gas ~35.4 MJ/Nm³)
+
+  // Air
+  airTempIn: 20,          // °C fresh air temperature
+  o2Flue: 3.5,            // % O2 in flue gas (dry)
+  flueGasTemp: 180,       // °C flue gas outlet
+
+  // Boiler drum
+  drumPressure: 10,       // bar(g) → bara = +1.013
+  boilerConductivity: 2000, // µS/cm
+
+  // Blowdown
+  bdFlow: 0.5,            // % of steam flow for continuous BD
+  bdHeatRecovery: false,
+
+  // Steam to users
+  steamFlow: 1000,        // kg/h (calculated or set)
+  steamFlowAuto: true,
+
+  // Condensate return
+  condReturnTemp: 80,     // °C
+  condReturnFlow: 700,    // kg/h
+  condFlowAuto: false,
+  makeupFlow: 300,        // kg/h
+
+  // Deaerator
+  daeaPressure: 0.2,      // bar(g)
+  daeaConductivity: 20,   // µS/cm
+
+  // Economizer
+  ecoEnabled: false,
+  ecoFlueTempOut: 130,    // °C after economizer
+
+  // Radiation loss (fixed %)
+  radLossPct: 1.5,
+};
+
+// ─── THERMODYNAMICS ───────────────────────────────────────────────────────────
+function satTempFromP(barg) {
+  const bara = barg + 1.013;
+  // Antoine equation approximation for water (valid 100–374°C)
+  // Using simplified polynomial fit to steam tables
+  const T = [120.23, 133.55, 143.63, 151.84, 158.85, 165.00, 170.42, 175.38, 179.91, 184.09, 187.99, 191.61, 195.07, 198.32, 201.41, 204.34, 207.11, 209.80, 212.42, 214.96, 217.45, 219.88, 222.23][Math.min(Math.round(bara)-1,22)];
+  if (T) return Math.round(T * 10)/10;
+  // fallback polynomial
+  return Math.round((100 + 28.8*Math.log(bara)) * 10) / 10;
+}
+
+function satEnthalpyLiquid(tsat) {
+  return 4.187 * tsat; // kJ/kg approx (enthalpy of sat liquid)
+}
+function latentHeat(tsat) {
+  // Watson equation
+  return 2501 - 2.37 * tsat; // kJ/kg approx
+}
+function satEnthalpyVapour(tsat) {
+  return satEnthalpyLiquid(tsat) + latentHeat(tsat);
+}
+
+function daeaTemp(daeaBarg) {
+  return satTempFromP(daeaBarg);
+}
+
+function enthalpyLiquid(T) {
+  return 4.187 * T; // kJ/kg (liquid, ~1 atm)
+}
+
+// Excess air from O2 (Ostwald formula for natural gas)
+function excessAirFromO2(o2pct) {
+  // For CH4-dominant gas: EA% = O2% / (20.9 - O2%) * 100 * correction
+  return (o2pct / (20.9 - o2pct)) * 100 * 1.11;
+}
+
+// Flue gas loss (Siegert method for natural gas)
+function flueGasLossPct(tFlue, tAir, o2pct) {
+  // Siegert: q_flue = (A1/(21-O2) + B) * (tFlue - tAir)
+  const A1 = 0.37, B = -0.009; // coeffs for natural gas
+  return (A1 / (21 - o2pct) + B) * (tFlue - tAir);
+}
+
+// ─── CALCULATIONS ─────────────────────────────────────────────────────────────
+function calculate() {
+  const tSat = satTempFromP(S.drumPressure);
+  const hSteam = satEnthalpyVapour(tSat);    // kJ/kg
+  const hLiqSat = satEnthalpyLiquid(tSat);   // kJ/kg
+
+  const tDaea = daeaTemp(S.daeaPressure);
+  const hFW_daea = enthalpyLiquid(tDaea);     // kJ/kg feed water from deaerator
+
+  // Economizer
+  let hFW = hFW_daea;
+  let tFW = tDaea;
+  let ecoHeat = 0;
+  let ecoDt = 0;
+  if (S.ecoEnabled) {
+    const tFlueBefore = S.flueGasTemp;
+    const tFlueAfter = S.ecoFlueTempOut;
+    // Estimate flue gas flow from combustion stoichiometry
+    const exAir = excessAirFromO2(S.o2Flue);
+    const gasPowerLHV = S.gasFlowRate * S.gasLHV; // kW
+    const flueGasMassFlow = gasPowerLHV / (S.gasLHV * 1000 / 3600 * 1.12); // rough
+    const cpFlue = 1.04; // kJ/(kg·K) approx
+    // Heat recovered = Q_fuel * loss_reduction
+    const lossBefore = flueGasLossPct(tFlueBefore, S.airTempIn, S.o2Flue) / 100;
+    const lossAfter  = flueGasLossPct(tFlueAfter,  S.airTempIn, S.o2Flue) / 100;
+    const gasPower = gasPowerLHV; // kW
+    ecoHeat = gasPower * (lossBefore - lossAfter);
+    // FW temp rise
+    let mDot = S.steamFlow / 3600 * (1 + S.bdFlow/100); // kg/s
+    if (mDot > 0) ecoDt = ecoHeat / (mDot * 4.187);
+    tFW = tDaea + ecoDt;
+    hFW = enthalpyLiquid(tFW);
+    ecoDt = Math.round(ecoDt * 10) / 10;
+  }
+
+  // Gas power
+  let gasPowerLHV, gasPowerHHV;
+  if (S.gasInputMode === 'volume') {
+    gasPowerLHV = S.gasFlowRate * S.gasLHV;
+    gasPowerHHV = S.gasFlowRate * S.gasHHV;
+  } else if (S.gasInputMode === 'lhv') {
+    gasPowerLHV = S.gasInputValue;
+    gasPowerHHV = S.gasInputValue * (S.gasHHV / S.gasLHV);
+    S.gasFlowRate = S.gasInputValue / S.gasLHV;
+  } else {
+    gasPowerHHV = S.gasInputValue;
+    gasPowerLHV = S.gasInputValue * (S.gasLHV / S.gasHHV);
+    S.gasFlowRate = S.gasInputValue / S.gasHHV;
+  }
+
+  // Condensate
+  let condFlow = S.condFlowAuto ? (S.steamFlow - S.makeupFlow) : S.condReturnFlow;
+  condFlow = Math.max(0, Math.min(condFlow, S.steamFlow));
+  const condPct = S.steamFlow > 0 ? (condFlow / S.steamFlow * 100) : 0;
+  const makeupFlow = S.steamFlow - condFlow;
+
+  // Blowdown
+  const bdFlowKgH = S.steamFlow * S.bdFlow / 100;
+  const bdHeat = (bdFlowKgH / 3600) * (hLiqSat - enthalpyLiquid(20)); // kW vs cold
+
+  // Steam heat output
+  const steamKW = (S.steamFlow / 3600) * (hSteam - hFW);
+  const fwFlow = S.steamFlow + bdFlowKgH;
+
+  // Flue gas loss
+  const tFlueEff = S.ecoEnabled ? S.ecoFlueTempOut : S.flueGasTemp;
+  const flueLossPct = flueGasLossPct(tFlueEff, S.airTempIn, S.o2Flue);
+  const flueLossKW = gasPowerLHV * flueLossPct / 100;
+
+  // Radiation
+  const radLossKW = gasPowerLHV * S.radLossPct / 100;
+
+  // Efficiencies
+  const combustEff = Math.max(0, 100 - flueLossPct - S.radLossPct);
+  const boilerEff  = gasPowerLHV > 0 ? Math.max(0, steamKW / gasPowerLHV * 100) : 0;
+  const bhEff      = gasPowerHHV > 0 ? Math.max(0, (steamKW - bdHeat * 0.5) / gasPowerHHV * 100) : 0;
+
+  // Heat saved by condensate return
+  const coldWaterEnth = enthalpyLiquid(15);
+  const condHeatSaved = (condFlow / 3600) * (enthalpyLiquid(S.condReturnTemp) - coldWaterEnth);
+
+  // Excess air %
+  const excessAir = excessAirFromO2(S.o2Flue);
+
+  return {
+    tSat, hSteam, hLiqSat, hFW, tFW,
+    gasPowerLHV, gasPowerHHV,
+    steamKW, fwFlow,
+    flueLossPct, flueLossKW,
+    radLossKW, bdHeat,
+    ecoHeat, ecoDt,
+    condFlow, condPct, makeupFlow,
+    condHeatSaved,
+    combustEff, boilerEff, bhEff,
+    excessAir, tFlueEff,
+    bdFlowKgH,
+  };
+}
+
+// ─── DRAW DIAGRAM ─────────────────────────────────────────────────────────────
+function fmt(v, dec=1) {
+  if (v === undefined || v === null || isNaN(v)) return '—';
+  return v.toFixed(dec);
+}
+function fmtK(v) {
+  if (isNaN(v)) return '—';
+  return v >= 1000 ? (v/1000).toFixed(1)+'M' : Math.round(v).toString();
+}
+
+const svg = document.getElementById('diagram');
+
+function clearSVG() { svg.innerHTML = ''; }
+
+function el(tag, attrs={}, text='') {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  Object.entries(attrs).forEach(([k,v]) => e.setAttribute(k,v));
+  if (text) e.textContent = text;
+  return e;
+}
+
+function paramBox(parent, x, y, w, h, label, value, unit, key, clickable=true) {
+  // Enforce minimum height of 54px so label/value/unit never collide
+  const H = Math.max(h, 54);
+  const g = el('g', { class: clickable ? 'param-node' : '' });
+  const bg = el('rect', { x, y, width: w, height: H, rx: 4, class: 'param-bg' });
+  g.appendChild(bg);
+
+  // Label: 11px from top baseline
+  const lbl = el('text', { x: x+w/2, y: y+11, class: 'param-label' }, label);
+  g.appendChild(lbl);
+
+  // Value: middle zone (between label bottom ~18px and unit top ~H-18px)
+  const valY = y + 11 + (H - 11 - 18) / 2 + 6;
+  const val = el('text', { x: x+w/2, y: valY, class: 'param-value' }, value);
+  g.appendChild(val);
+
+  // Unit: 9px from bottom baseline
+  const unt = el('text', { x: x+w/2, y: y+H-7, class: 'param-unit' }, unit);
+  g.appendChild(unt);
+
+  if (clickable && key) {
+    g.style.cursor = 'pointer';
+    g.addEventListener('click', (e) => { e.stopPropagation(); openPopup(key, e.clientX, e.clientY); });
+  }
+  parent.appendChild(g);
+  return g;
+}
+
+function pipe(parent, d, cls) {
+  const p = el('path', { d, class: 'pipe ' + cls });
+  parent.appendChild(p);
+  return p;
+}
+
+function animPipe(parent, d, cls, dir='right') {
+  // Background pipe
+  const p = el('path', { d, class: 'pipe ' + cls });
+  parent.appendChild(p);
+  // Animated overlay
+  const a = el('path', { d, class: 'animated-flow ' + cls + ' anim-' + dir });
+  parent.appendChild(a);
+  return a;
+}
+
+function compBox(parent, x, y, w, h, label, sublabel='', cls='comp-box') {
+  const g = el('g');
+  const rect = el('rect', { x, y, width: w, height: h, rx: 6, class: cls });
+  g.appendChild(rect);
+  const lbl = el('text', { x: x+w/2, y: sublabel ? y+h/2-6 : y+h/2, class: 'comp-label' }, label);
+  g.appendChild(lbl);
+  if (sublabel) {
+    const sub = el('text', { x: x+w/2, y: y+h/2+10, class: 'comp-sublabel' }, sublabel);
+    g.appendChild(sub);
+  }
+  parent.appendChild(g);
+  return g;
+}
+
+function arrow(parent, x1, y1, x2, y2, cls) {
+  const dx = x2-x1, dy = y2-y1;
+  const len = Math.sqrt(dx*dx+dy*dy);
+  const ux = dx/len, uy = dy/len;
+  const ax = x2-ux*12, ay = y2-uy*12;
+  const nx = -uy, ny = ux;
+  const pts = `${x2},${y2} ${ax+nx*5},${ay+ny*5} ${ax-nx*5},${ay-ny*5}`;
+  const line = el('line', { x1, y1, x2: ax, y2: ay, class: 'pipe '+cls });
+  const tri = el('polygon', { points: pts, style: `fill:currentColor;`, class: cls.replace('flow-','').split(' ')[0] });
+  parent.appendChild(line);
+  parent.appendChild(tri);
+}
+
+function sectionLabel(parent, x, y, text) {
+  const t = el('text', { x, y, class: 'section-label' }, text);
+  parent.appendChild(t);
+}
+
+function drawDiagram(R) {
+  clearSVG();
+  const g = el('g');
+  svg.appendChild(g);
+
+  // ── Exact coordinates from draw.io XML (scale=1.0195, xmin=-20→12, ymin=78→12) ──
+  // Equipment boxes [x, y, w, h]
+  const BOI = [256.7, 217.9, 112.1, 142.7];  // Boiler
+  const BUR = [143.5, 276.1,  72.4,  56.1];  // Burner
+  const STK = [288.3,  53.8,  51.0,  41.8];  // Stack
+  const ECO = [253.6, 127.2, 120.3,  53.0];  // Economizer
+  const MAN = [536.0, 252.6, 102.0,  31.6];  // Manifold
+  const DAE = [518.7,  95.6, 142.7,  65.2];  // Deaerator
+  const USR = [690.0, 248.5, 102.0,  61.2];  // Users
+
+  // Param label boxes [x, y, w, h]
+  const PGas = [101.7, 370.9, 132.5, 56.1];  // Gas input
+  const PAir = [ 12.0, 271.0,  81.6, 44.9];  // Fresh air
+  const PFlt = [164.9,  12.0, 102.0, 44.9];  // Flue temp
+  const PO2  = [164.9,  65.0, 102.0, 44.9];  // O2
+  const PDrP = [257.7, 244.4, 111.1, 55.1];  // Drum pressure
+  const PCdm = [257.7, 300.5, 111.1, 58.1];  // Drum conductivity/Tsat
+  const PBD  = [246.5, 417.8, 110.1, 56.1];  // Blowdown
+  const PMu  = [360.7,  34.4, 112.1, 44.9];  // Makeup water
+  const PFW  = [405.5, 341.3,  76.5, 44.9];  // Feed water  ← moved UP from draw.io y=401 to avoid steam line overlap
+  const PSf  = [634.9, 194.5,  70.3, 30.6];  // Steam flow
+  const PCR  = [718.5,  73.2, 112.1, 56.1];  // Cond return
+
+  // Centres
+  const cx = b => b[0]+b[2]/2, cy = b => b[1]+b[3]/2;
+  const r  = b => b[0]+b[2],   bo = b => b[1]+b[3];
+
+  // Gas label
+  let gasLabel, gasUnit;
+  if      (S.gasInputMode==='volume') { gasLabel=fmt(S.gasFlowRate,1); gasUnit='Nm³/h'; }
+  else if (S.gasInputMode==='lhv')    { gasLabel=fmt(R.gasPowerLHV,0); gasUnit='kW LHV'; }
+  else                                { gasLabel=fmt(R.gasPowerHHV,0); gasUnit='kW HHV'; }
+
+  // ── PIPES ─────────────────────────────────────────────────────────────────
+
+  // Flue: boiler top-centre → eco bottom → eco top → stack bottom
+  if (S.ecoEnabled) {
+    animPipe(g, `M ${cx(BOI)} ${BOI[1]} L ${cx(BOI)} ${bo(ECO)}`, 'flow-flue', 'up');
+    animPipe(g, `M ${cx(ECO)} ${ECO[1]} L ${cx(STK)} ${bo(STK)}`, 'flow-flue', 'up');
+  } else {
+    animPipe(g, `M ${cx(BOI)} ${BOI[1]} L ${cx(STK)} ${bo(STK)}`, 'flow-flue', 'up');
+  }
+
+  // Burner → Boiler (horizontal at 60% height of burner)
+  const flameY = BUR[1] + BUR[3]*0.6;
+  animPipe(g, `M ${r(BUR)} ${flameY} L ${BOI[0]} ${flameY}`, 'flow-flue', 'right');
+
+  // Gas → Burner (from below)
+  animPipe(g, `M ${cx(PGas)} ${PGas[1]} L ${cx(BUR)} ${bo(BUR)}`, 'flow-gas', 'up');
+
+  // Air → Burner (horizontal)
+  animPipe(g, `M ${r(PAir)} ${cy(PAir)} L ${BUR[0]} ${cy(PAir)}`, 'flow-air', 'right');
+
+  // Steam: boiler→manifold. draw.io waypoints: 402,320 → 402,329 → 476,329
+  // Scaled: 442.2,258.7 → 442.2,267.9 → 517.7,267.9  → manifold left mid
+  animPipe(g,
+    `M ${r(BOI)} ${BOI[1]+BOI[3]*0.15} L 442.2 ${BOI[1]+BOI[3]*0.15} L 442.2 267.9 L 517.7 267.9 L ${MAN[0]} ${cy(MAN)}`,
+    'flow-steam', 'right');
+
+  // Steam: manifold top-left (25%) → deaerator bottom (30%) — straight vertical
+  const mDA_x = MAN[0] + MAN[2]*0.25;
+  animPipe(g, `M ${mDA_x} ${MAN[1]} L ${mDA_x} ${bo(DAE)}`, 'flow-steam', 'up');
+
+  // Steam: manifold top (60%) → waypoints → users top (40%)
+  // draw.io: 554,289 → 685,289 → 685,310  scaled: 597.2,227.1 → 730.8,227.1 → 730.8,248.5
+  const mU_x = MAN[0] + MAN[2]*0.6;
+  animPipe(g,
+    `M ${mU_x} ${MAN[1]} L ${mU_x} 227.1 L 730.8 227.1 L 730.8 ${USR[1]}`,
+    'flow-steam', 'right');
+
+  // Condensate: users right mid → 848,279 → 848,57.9 → 625.7,57.9 → DA top 75%
+  // (clamped from 844.9 to 848 to stay within 860px canvas)
+  const daCondX = DAE[0] + DAE[2]*0.75;
+  animPipe(g,
+    `M ${r(USR)} ${cy(USR)} L 848 ${cy(USR)} L 848 57.9 L ${daCondX} 57.9 L ${daCondX} ${DAE[1]}`,
+    'flow-condensate', 'left');
+
+  // Makeup → DA left at 25% height (horizontal from right of makeup label)
+  animPipe(g, `M ${r(PMu)} ${cy(PMu)} L ${DAE[0]} ${DAE[1]+DAE[3]*0.25}`, 'flow-water', 'right');
+
+  // Feed water: DA left (75%) → 490.2,144.5 → 490.2,339.3 → boiler right (85%)
+  // This route: exits DA left, goes LEFT to x=490, drops down, enters boiler right
+  // x=490.2 is between boiler-right(369) and manifold-left(536) — clear of both
+  animPipe(g,
+    `M ${DAE[0]} ${DAE[1]+DAE[3]*0.75} L 490.2 ${DAE[1]+DAE[3]*0.75} L 490.2 339.3 L ${r(BOI)} 339.3 L ${r(BOI)} ${BOI[1]+BOI[3]*0.85}`,
+    'flow-water', 'left');
+
+  // Blowdown: boiler bottom 40% → BD label top
+  animPipe(g, `M ${BOI[0]+BOI[2]*0.4} ${bo(BOI)} L ${BOI[0]+BOI[2]*0.4} ${PBD[1]}`, 'flow-blowdown', 'down');
+
+  // ── EQUIPMENT BOXES ───────────────────────────────────────────────────────
+
+  // Boiler
+  g.appendChild(el('rect',{x:BOI[0]+2,y:BOI[1]+2,width:BOI[2],height:BOI[3],rx:6,fill:'#000',opacity:'0.4'}));
+  g.appendChild(el('rect',{x:BOI[0],y:BOI[1],width:BOI[2],height:BOI[3],rx:6,fill:'#0f1d2e',stroke:'#2563eb','stroke-width':'2'}));
+  g.appendChild(el('text',{x:cx(BOI),y:BOI[1]+BOI[3]/2+10,'text-anchor':'middle','font-size':'36',opacity:'0.10'},'🔥'));
+  g.appendChild(el('text',{x:cx(BOI),y:BOI[1]+18,class:'comp-label'},'BOILER'));
+
+  // Burner
+  g.appendChild(el('rect',{x:BUR[0],y:BUR[1],width:BUR[2],height:BUR[3],rx:5,fill:'#1a1510',stroke:'#92400e','stroke-width':'2'}));
+  g.appendChild(el('text',{x:cx(BUR),y:cy(BUR)+4,class:'comp-label'},'BURNER'));
+  g.appendChild(el('polygon',{points:`${r(BUR)},${cy(BUR)-10} ${r(BUR)},${cy(BUR)+10} ${r(BUR)+12},${cy(BUR)}`,fill:'#92400e'}));
+  g.appendChild(el('text',{x:cx(BUR),y:BUR[1]-6,class:'section-label',fill:'#86efac'},'Excess air: '+fmt(R.excessAir,0)+'%'));
+
+  // Stack
+  g.appendChild(el('rect',{x:STK[0],y:STK[1],width:STK[2],height:STK[3],rx:4,fill:'#1c1020',stroke:'#7f1d1d','stroke-width':'2'}));
+  g.appendChild(el('text',{x:cx(STK),y:cy(STK)+4,class:'comp-label','font-size':'9',fill:'#f87171'},'▲STACK'));
+
+  // ECO toggle — right of stack, never overlaps makeup water (makeup is at x=360, toggle is at x=351→427)
+  const etg = el('g',{class:'eco-toggle'});
+  const etX = STK[0]+STK[2]+8, etY = STK[1]+4;
+  etg.appendChild(el('rect',{x:etX,y:etY,width:76,height:22,rx:11,class:'eco-toggle-bg'+(S.ecoEnabled?' on':'')}));
+  etg.appendChild(el('text',{x:etX+38,y:etY+11,class:'eco-toggle-text'},S.ecoEnabled?'⬤ ECO ON':'○ ECO OFF'));
+  etg.addEventListener('click',ev=>{ev.stopPropagation();S.ecoEnabled=!S.ecoEnabled;recalcAndDraw();});
+  g.appendChild(etg);
+
+  // Economizer
+  const ecoOp = S.ecoEnabled ? '1' : '0.3';
+  g.appendChild(el('rect',{x:ECO[0],y:ECO[1],width:ECO[2],height:ECO[3],rx:5,fill:'#0d2b1a',stroke:'#4ade80','stroke-width':'1.5',opacity:ecoOp,style:S.ecoEnabled?'':'stroke-dasharray:5 3'}));
+  g.appendChild(el('text',{x:cx(ECO),y:ECO[1]+17,class:'comp-label',fill:'#4ade80',opacity:ecoOp},'ECONOMIZER'));
+  g.appendChild(el('text',{x:cx(ECO),y:ECO[1]+33,class:'comp-sublabel',fill:'#86efac',opacity:ecoOp},
+    S.ecoEnabled ? fmt(R.ecoHeat,0)+' kW recovered' : '(disabled)'));
+  if (S.ecoEnabled) {
+    paramBox(g, ECO[0]+ECO[2]+6, ECO[1], 78, ECO[3], 'Eco out', fmt(S.ecoFlueTempOut), '°C', 'ecoFlueTempOut');
+  }
+
+  // Manifold
+  g.appendChild(el('rect',{x:MAN[0],y:MAN[1],width:MAN[2],height:MAN[3],rx:5,fill:'#0a1f2e',stroke:'#ef4444','stroke-width':'2'}));
+  g.appendChild(el('text',{x:cx(MAN),y:cy(MAN)+4,class:'comp-label'},'MANIFOLD'));
+
+  // Deaerator — clickable
+  const dag = el('g',{class:'param-node',style:'cursor:pointer'});
+  dag.appendChild(el('rect',{x:DAE[0],y:DAE[1],width:DAE[2],height:DAE[3],rx:5,fill:'#1a1f0d',stroke:'#86efac','stroke-width':'1.5',class:'param-bg'}));
+  dag.appendChild(el('text',{x:cx(DAE),y:DAE[1]+15,class:'comp-label'},'DEAERATOR'));
+  dag.appendChild(el('text',{x:cx(DAE),y:DAE[1]+29,class:'comp-sublabel'},fmt(S.daeaPressure,2)+' bar(g)  ·  T='+fmt(daeaTemp(S.daeaPressure),0)+'°C'));
+  dag.appendChild(el('text',{x:cx(DAE),y:DAE[1]+43,class:'comp-sublabel'},S.daeaConductivity+' µS/cm'));
+  dag.addEventListener('click',ev=>{ev.stopPropagation();openPopup('daerator',ev.clientX,ev.clientY);});
+  g.appendChild(dag);
+
+  // Users
+  g.appendChild(el('rect',{x:USR[0],y:USR[1],width:USR[2],height:USR[3],rx:5,fill:'#12243a',stroke:'#93c5fd','stroke-width':'1.5'}));
+  g.appendChild(el('text',{x:cx(USR),y:cy(USR)+4,class:'comp-label'},'USERS'));
+
+  // ── PARAM BOXES ───────────────────────────────────────────────────────────
+  paramBox(g, PGas[0],PGas[1],PGas[2],PGas[3], 'Gas input', gasLabel, gasUnit, 'gasInput');
+  paramBox(g, PAir[0],PAir[1],PAir[2],PAir[3], 'Fresh air', fmt(S.airTempIn), '°C', 'airTempIn');
+  paramBox(g, PFlt[0],PFlt[1],PFlt[2],PFlt[3], 'Flue temp', fmt(S.ecoEnabled?S.ecoFlueTempOut:S.flueGasTemp), '°C', 'flueGasTemp');
+  paramBox(g, PO2[0], PO2[1], PO2[2], PO2[3],  'O₂ flue', fmt(S.o2Flue), '% vol dry', 'o2Flue');
+  g.appendChild(el('text',{x:cx(PO2),y:bo(PO2)+11,class:'comp-sublabel',fill:'#f87171'},'Loss: '+fmt(R.flueLossPct,1)+'%'));
+  paramBox(g, PDrP[0],PDrP[1],PDrP[2],PDrP[3], 'Drum pressure', fmt(S.drumPressure,1), 'bar(g)', 'drumPressure');
+  paramBox(g, PCdm[0],PCdm[1],PCdm[2],PCdm[3], 'T_sat  ·  conductivity', fmt(R.tSat,1)+' °C', S.boilerConductivity+' µS/cm', 'boilerConductivity');
+  paramBox(g, PBD[0], PBD[1], PBD[2], PBD[3],  'Blowdown '+fmt(S.bdFlow,1)+'%', fmt(R.bdFlowKgH,0), 'kg/h', 'bdFlow');
+  g.appendChild(el('text',{x:cx(PBD),y:bo(PBD)+11,class:'section-label',fill:'#a78bfa'},'loss: '+fmt(R.bdHeat,0)+' kW'));
+  paramBox(g, PMu[0], PMu[1], PMu[2], PMu[3],  'Makeup water', fmt(R.makeupFlow,0), 'kg/h', 'makeupFlow');
+  // FW label: above manifold-boiler steam line, centred on vertical FW pipe segment
+  paramBox(g, PFW[0], PFW[1], PFW[2], PFW[3],  S.ecoEnabled?'FW (eco)':'FW (DA)', fmt(R.tFW,1)+'°C', fmt(R.fwFlow,0)+' kg/h', null, false);
+  paramBox(g, PSf[0], PSf[1], PSf[2], PSf[3],  'Steam', fmt(S.steamFlow,0), 'kg/h', 'steamFlow');
+  paramBox(g, PCR[0], PCR[1], PCR[2], PCR[3],  'Cond. return '+fmt(R.condPct,0)+'%',
+    fmt(S.condFlowAuto?R.condFlow:S.condReturnFlow,0)+' kg/h', fmt(S.condReturnTemp,0)+' °C', 'condReturnFlow');
+
+  // Radiation loss label
+  g.appendChild(el('text',{x:BOI[0]-4,y:BOI[1]+BOI[3]*0.5,class:'section-label','text-anchor':'end',fill:'#f87171'},
+    '↖ Rad. '+fmt(R.radLossKW,0)+' kW'));
+
+  // ── LEGEND — exact draw.io positions (legend-bg at 536,341 scaled) ────────
+  // legend-bg: x=536.0 y=341.3 w=311 h=122.3
+  const LX=536, LY=341.3, LW=311, LH=122;
+  g.appendChild(el('rect',{x:LX,y:LY,width:LW,height:LH,rx:5,fill:'#161b22',stroke:'#30363d'}));
+  g.appendChild(el('text',{x:LX+8,y:LY+14,class:'section-label',fill:'#8b949e','text-anchor':'start','letter-spacing':'1'},'PIPE LEGEND'));
+  // Legend items with exact positions from draw.io (all scaled)
+  // Left column: x=546.2, right col: x=709.3
+  // Rows: y=378, 400.4, 422.9
+  const legItems = [
+    // [lineX1, lineX2, lineY, textX, textY, color, sw, label]
+    [546.2, 568.7, 378.0, 572, 382, '#ef4444', 4, 'Steam'],
+    [546.2, 568.7, 400.4, 572, 404, '#38bdf8', 3, 'Feed water'],
+    [546.2, 568.7, 422.9, 572, 427, '#a78bfa', 2, 'Blowdown'],
+    [709.3, 731.8, 378.0, 735, 382, '#fbbf24', 3, 'Condensate'],
+    [709.3, 731.8, 400.4, 735, 404, '#ff7c2a', 3, 'Flue/Fuel'],
+    [709.3, 731.8, 422.9, 735, 427, '#86efac', 2, 'Air'],
+  ];
+  legItems.forEach(([x1,x2,ly,tx,ty,col,sw,name])=>{
+    g.appendChild(el('line',{x1,y1:ly,x2,y2:ly,stroke:col,'stroke-width':sw,'stroke-linecap':'round'}));
+    g.appendChild(el('text',{x:tx,y:ty,class:'section-label',fill:col,'text-anchor':'start'},name));
+  });
+}
+
+// ─── UPDATE UI ────────────────────────────────────────────────────────────────
+function updateSidebar(R) {
+  const s = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
+  s('r-gas-lhv', `${fmt(R.gasPowerLHV,0)} kW`);
+  s('r-gas-hhv', `${fmt(R.gasPowerHHV,0)} kW`);
+  s('r-steam-kw', `${fmt(R.steamKW,0)} kW`);
+  s('r-steam-kg', `${fmt(S.steamFlow,0)} kg/h`);
+  s('r-steam-tsat', `${fmt(R.tSat,1)} °C`);
+  s('r-flue-loss', `${fmt(R.flueLossKW,0)} kW`);
+  s('r-flue-pct', `${fmt(R.flueLossPct,1)}%`);
+  s('r-bd-loss', `${fmt(R.bdHeat,0)} kW`);
+  s('r-rad-loss', `${fmt(R.radLossKW,0)} kW`);
+  s('r-fw-temp', `${fmt(R.tFW,1)} °C`);
+  s('r-fw-flow', `${fmt(R.fwFlow,0)} kg/h`);
+  s('r-fw-enth', `${fmt(R.hFW,0)} kJ/kg`);
+  s('r-eco-kw', S.ecoEnabled ? `${fmt(R.ecoHeat,0)} kW` : '— kW');
+  s('r-eco-dt', S.ecoEnabled ? `${fmt(R.ecoDt,1)} °C` : '— °C');
+  s('r-cond-pct', `${fmt(R.condPct,0)}%`);
+  s('r-makeup', `${fmt(R.makeupFlow,0)} kg/h`);
+  s('r-cond-saved', `${fmt(R.condHeatSaved,0)} kW`);
+
+  // Efficiency badges
+  const fmtEff = (id, v) => {
+    const e = document.getElementById(id);
+    if (!e) return;
+    e.textContent = v > 0 ? `${v.toFixed(1)}%` : '—';
+    e.className = 'eff-value' + (v >= 85 ? '' : v >= 75 ? ' warn' : ' danger');
+  };
+  fmtEff('combustion-eff', R.combustEff);
+  fmtEff('boiler-eff', R.boilerEff);
+  fmtEff('bh-eff', R.bhEff);
+}
+
+function recalcAndDraw() {
+  const R = calculate();
+  drawDiagram(R);
+  updateSidebar(R);
+}
+
+// ─── POPUP SYSTEM ─────────────────────────────────────────────────────────────
+const PARAMS = {
+  gasInput: {
+    title: 'Gas Input',
+    render: () => {
+      const modeLabel = S.gasInputMode==='volume' ? 'Flow (Nm³/h)' : S.gasInputMode==='lhv' ? 'Power LHV (kW)' : 'Power HHV (kW)';
+      const modeValue = S.gasInputMode==='volume' ? S.gasFlowRate.toFixed(1) : S.gasInputValue.toFixed(1);
+      return `
+      <div class="popup-row">
+        <label>Input mode</label>
+        <select id="gas-mode-sel" onchange="
+          S.gasInputMode=this.value;
+          if(S.gasInputMode==='volume'){ S.gasFlowRate=S.gasInputValue||100; }
+          recalcAndDraw();
+          document.getElementById('popup-content').innerHTML=PARAMS.gasInput.render();
+        ">
+          <option value="volume" ${S.gasInputMode==='volume'?'selected':''}>Volume flow</option>
+          <option value="lhv"    ${S.gasInputMode==='lhv'   ?'selected':''}>Power (LHV)</option>
+          <option value="hhv"    ${S.gasInputMode==='hhv'   ?'selected':''}>Power (HHV)</option>
+        </select>
+      </div>
+      <div class="popup-row">
+        <label>${modeLabel}</label>
+        <input type="number" value="${modeValue}" step="1" min="0"
+          onchange="
+            const v=parseFloat(this.value)||0;
+            S.gasInputValue=v;
+            if(S.gasInputMode==='volume') S.gasFlowRate=v;
+            recalcAndDraw();
+          ">
+      </div>
+      <div class="popup-row" style="margin-top:6px;border-top:1px solid #30363d;padding-top:8px">
+        <label>LHV (kWh/Nm³)</label>
+        <input type="number" value="${S.gasLHV}" step="0.01"
+          onchange="S.gasLHV=parseFloat(this.value)||10.35; recalcAndDraw()">
+      </div>
+      <div class="popup-row">
+        <label>HHV (kWh/Nm³)</label>
+        <input type="number" value="${S.gasHHV}" step="0.01"
+          onchange="S.gasHHV=parseFloat(this.value)||11.63; recalcAndDraw()">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;font-family:var(--mono)">
+        ≡ ${S.gasInputMode!=='lhv' ? fmt(S.gasFlowRate*S.gasLHV,0)+' kW LHV' : fmt(S.gasFlowRate,1)+' Nm³/h'}
+      </div>
+    `; },
+  },
+  airTempIn: {
+    title: 'Fresh Air Temperature',
+    render: () => `
+      <div class="popup-row">
+        <label>Air temp (°C)</label>
+        <input type="number" value="${S.airTempIn}" step="1"
+          onchange="S.airTempIn=parseFloat(this.value)||20; recalcAndDraw()">
+      </div>
+    `,
+  },
+  flueGasTemp: {
+    title: 'Flue Gas / Economizer',
+    render: () => `
+      <div class="popup-row">
+        <label>Flue temp (°C)</label>
+        <input type="number" value="${S.flueGasTemp}" step="5"
+          onchange="S.flueGasTemp=parseFloat(this.value)||180; recalcAndDraw()">
+      </div>
+      ${S.ecoEnabled ? `<div class="popup-row">
+        <label>After eco (°C)</label>
+        <input type="number" value="${S.ecoFlueTempOut}" step="5"
+          onchange="S.ecoFlueTempOut=parseFloat(this.value)||130; recalcAndDraw()">
+      </div>` : ''}
+    `,
+  },
+  ecoFlueTempOut: {
+    title: 'Economizer Outlet Temp',
+    render: () => `
+      <div class="popup-row">
+        <label>After eco (°C)</label>
+        <input type="number" value="${S.ecoFlueTempOut}" step="5"
+          onchange="S.ecoFlueTempOut=parseFloat(this.value)||130; recalcAndDraw()">
+      </div>
+    `,
+  },
+  o2Flue: {
+    title: 'O₂ in Flue Gas',
+    render: () => `
+      <div class="popup-row">
+        <label>O₂ (% vol dry)</label>
+        <input type="number" value="${S.o2Flue}" step="0.1" min="0" max="15"
+          onchange="S.o2Flue=parseFloat(this.value)||3.5; recalcAndDraw()">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;font-family:var(--mono)">
+        → Excess air: ${fmt(excessAirFromO2(S.o2Flue),0)}%<br>
+        Used to calculate combustion air flow
+      </div>
+    `,
+  },
+  drumPressure: {
+    title: 'Steam Drum Pressure',
+    render: () => `
+      <div class="popup-row">
+        <label>Pressure bar(g)</label>
+        <input type="number" value="${S.drumPressure}" step="0.5" min="0.5" max="150"
+          onchange="S.drumPressure=parseFloat(this.value)||10; recalcAndDraw()">
+      </div>
+    `,
+  },
+  boilerConductivity: {
+    title: 'Boiler Drum Conductivity',
+    render: () => `
+      <div class="popup-row">
+        <label>Conductivity (µS/cm)</label>
+        <input type="number" value="${S.boilerConductivity}" step="100"
+          onchange="S.boilerConductivity=parseFloat(this.value)||2000; recalcAndDraw()">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;font-family:var(--mono)">
+        Ref: typically 1500–3000 µS/cm<br>
+        Affects blowdown frequency
+      </div>
+    `,
+  },
+  bdFlow: {
+    title: 'Continuous Blowdown',
+    render: () => `
+      <div class="popup-row">
+        <label>BD rate (% steam)</label>
+        <input type="number" value="${S.bdFlow}" step="0.1" min="0" max="20"
+          onchange="S.bdFlow=parseFloat(this.value)||0.5; recalcAndDraw()">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;font-family:var(--mono)">
+        BD loss: ${fmt(calculate().bdHeat,0)} kW<br>
+        Typical: 0.3–2% of steam flow
+      </div>
+    `,
+  },
+  steamFlow: {
+    title: 'Steam Flow to Users',
+    render: () => `
+      <div class="popup-row">
+        <label>Auto-calc?</label>
+        <button class="btn-toggle ${S.steamFlowAuto?'active':''}"
+          onclick="S.steamFlowAuto=!S.steamFlowAuto; document.getElementById('sf-manual').style.opacity=S.steamFlowAuto?'0.4':'1'; recalcAndDraw()">
+          ${S.steamFlowAuto?'ON':'OFF'}
+        </button>
+      </div>
+      <div id="sf-manual" style="opacity:${S.steamFlowAuto?'0.4':'1'}">
+        <div class="popup-row">
+          <label>Steam flow (kg/h)</label>
+          <input type="number" value="${S.steamFlow}" step="10"
+            onchange="S.steamFlow=parseFloat(this.value)||1000; recalcAndDraw()">
+        </div>
+      </div>
+    `,
+  },
+  condReturnFlow: {
+    title: 'Condensate Return',
+    render: () => `
+      <div class="popup-row">
+        <label>Return (kg/h)</label>
+        <input type="number" value="${S.condReturnFlow}" step="10"
+          onchange="S.condReturnFlow=parseFloat(this.value)||700; S.condFlowAuto=false; recalcAndDraw()">
+      </div>
+    `,
+  },
+  condReturnTemp: {
+    title: 'Condensate Return Temperature',
+    render: () => `
+      <div class="popup-row">
+        <label>Return temp (°C)</label>
+        <input type="number" value="${S.condReturnTemp}" step="5"
+          onchange="S.condReturnTemp=parseFloat(this.value)||80; recalcAndDraw()">
+      </div>
+    `,
+  },
+  makeupFlow: {
+    title: 'Makeup Water',
+    render: () => `
+      <div class="popup-row">
+        <label>Makeup (kg/h)</label>
+        <input type="number" value="${S.makeupFlow}" step="10"
+          onchange="S.makeupFlow=parseFloat(this.value)||300; S.condReturnFlow=Math.max(0,S.steamFlow-S.makeupFlow); recalcAndDraw()">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;font-family:var(--mono)">
+        Condensate return = Steam - Makeup
+      </div>
+    `,
+  },
+  daerator: {
+    title: 'Deaerator',
+    render: () => `
+      <div class="popup-row">
+        <label>Pressure bar(g)</label>
+        <input type="number" value="${S.daeaPressure}" step="0.05" min="0" max="5"
+          onchange="S.daeaPressure=parseFloat(this.value)||0.2; recalcAndDraw()">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin:2px 0 8px;font-family:var(--mono)">
+        → T_sat = ${fmt(daeaTemp(S.daeaPressure),1)} °C
+      </div>
+      <div class="popup-row">
+        <label>Conductivity (µS/cm)</label>
+        <input type="number" value="${S.daeaConductivity}" step="5" min="0"
+          onchange="S.daeaConductivity=parseFloat(this.value)||20; recalcAndDraw()">
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;font-family:var(--mono)">
+        Typical DA: 5–30 µS/cm
+      </div>
+    `,
+  },
+  daeaPressure: { title:'DA Pressure', render:()=>`` },
+};
+
+function openPopup(key, clientX, clientY) {
+  const p = PARAMS[key];
+  if (!p) return;
+  const popup = document.getElementById('input-popup');
+  document.getElementById('popup-title').textContent = p.title;
+  document.getElementById('popup-content').innerHTML = p.render();
+  popup.classList.add('visible');
+
+  // Position it
+  const pw = 230, ph = 160;
+  let x = clientX + 12, y = clientY + 12;
+  if (x + pw > window.innerWidth) x = clientX - pw - 12;
+  if (y + ph > window.innerHeight) y = clientY - ph - 12;
+  popup.style.left = x + 'px';
+  popup.style.top  = y + 'px';
+}
+
+function closePopup() {
+  document.getElementById('input-popup').classList.remove('visible');
+}
+
+document.addEventListener('click', (e) => {
+  if (!document.getElementById('input-popup').contains(e.target)) closePopup();
+});
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+S.gasInputValue = S.gasFlowRate;
+recalcAndDraw();
+</script>
+</body>
+</html>

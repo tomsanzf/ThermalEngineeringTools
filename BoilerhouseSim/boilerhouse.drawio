@@ -4,17 +4,37 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
+        <mxCell id="b8rE7MtRaEYhCU-KSiza-4" edge="1" parent="1" source="deaerator" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#1D6281;strokeWidth=3;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.25;entryDx=0;entryDy=0;fontSize=9;fontColor=#38bdf8;labelBackgroundColor=none;dashed=1;dashPattern=1 2;" target="economizer" value="">
+          <mxGeometry relative="1" y="6" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="408" y="192" />
+              <mxPoint x="408" y="195" />
+            </Array>
+            <mxPoint x="592" y="261" as="sourcePoint" />
+            <mxPoint x="445" y="452" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b8rE7MtRaEYhCU-KSiza-6" edge="1" parent="1" source="economizer" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#1D6281;strokeWidth=3;endArrow=block;endFill=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=1.002;entryY=0.679;entryDx=0;entryDy=0;fontSize=9;fontColor=#38bdf8;labelBackgroundColor=none;entryPerimeter=0;dashed=1;dashPattern=1 2;" target="lbl-cond-drum" value="">
+          <mxGeometry relative="1" y="6" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="449" y="221" />
+              <mxPoint x="449" y="399" />
+              <mxPoint x="330" y="399" />
+            </Array>
+            <mxPoint x="566" y="188" as="sourcePoint" />
+            <mxPoint x="354" y="191" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
         <mxCell id="boiler" parent="1" style="verticalLabelPosition=top;outlineConnect=0;align=center;dashed=0;html=1;verticalAlign=bottom;shape=mxgraph.pid.misc.boiler_(dome,_hot_liquid);fillColor=#0f1d2e;strokeColor=#2563eb;fontColor=#e6edf3;fontSize=11;fontStyle=1;labelBackgroundColor=none;" value="" vertex="1">
           <mxGeometry height="140" width="110" x="220" y="280" as="geometry" />
         </mxCell>
         <mxCell id="burner" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a1510;strokeColor=#92400e;fontColor=#e6edf3;fontSize=11;fontStyle=1;" value="BURNER" vertex="1">
-          <mxGeometry height="55" width="71" x="109" y="337" as="geometry" />
+          <mxGeometry height="55" width="71" x="100" y="337" as="geometry" />
         </mxCell>
-        <mxCell id="stack" parent="1" style="verticalLabelPosition=bottom;outlineConnect=0;align=center;dashed=0;html=1;verticalAlign=top;shape=mxgraph.pid.misc.stack,_chimney;fillColor=#1c1020;strokeColor=#ef4444;fontColor=#ef4444;fontSize=10;fontStyle=1;" value="" vertex="1">
-          <mxGeometry height="41" width="50" x="251" y="119" as="geometry" />
-        </mxCell>
-        <mxCell id="economizer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d2b1a;strokeColor=#4ade80;fontColor=#4ade80;fontSize=10;fontStyle=1;dashed=1;" value="ECONOMIZER&lt;div&gt;x kW recovered&lt;br&gt;(optional)&lt;/div&gt;" vertex="1">
-          <mxGeometry height="52" width="118" x="217" y="191" as="geometry" />
+        <mxCell id="economizer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d2b1a;strokeColor=#4ade80;fontColor=#4ade80;fontSize=10;fontStyle=1;dashed=1;" value="ECONOMIZER&lt;div&gt;x kW recovered&lt;br&gt;T_in = 180 ºC&lt;/div&gt;&lt;div&gt;T_ou = 180ºC&lt;/div&gt;" vertex="1">
+          <mxGeometry height="52" width="118" x="147" y="182" as="geometry" />
         </mxCell>
         <mxCell id="manifold" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0a1f2e;strokeColor=#ef4444;fontColor=#e6edf3;fontSize=11;fontStyle=1;" value="MANIFOLD" vertex="1">
           <mxGeometry height="31" width="100" x="494" y="314" as="geometry" />
@@ -25,17 +45,14 @@
         <mxCell id="users" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#12243a;strokeColor=#93c5fd;fontColor=#e6edf3;fontSize=11;fontStyle=1;" value="USERS" vertex="1">
           <mxGeometry height="60" width="100" x="645" y="310" as="geometry" />
         </mxCell>
-        <mxCell id="lbl-gas" parent="1" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=#ff7c2a;fillColor=#1a1510;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Gas input&lt;/b&gt;&#xa;100 Nm³/h&#xa;(≡ 1035 kW LHV)" vertex="1">
-          <mxGeometry height="55" width="130" x="68" y="430" as="geometry" />
+        <mxCell id="lbl-gas" parent="1" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=#ff7c2a;fillColor=#1a1510;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Gas input&lt;/b&gt;&lt;br&gt;100 Nm³/h&lt;br&gt;(1035 kW LHV)" vertex="1">
+          <mxGeometry height="48" width="86" x="91" y="434" as="geometry" />
         </mxCell>
         <mxCell id="lbl-air" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#86efac;fillColor=#0d1f10;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Fresh air&lt;/b&gt;&#xa;20 °C" vertex="1">
           <mxGeometry height="44" width="80" x="-20" y="332" as="geometry" />
         </mxCell>
-        <mxCell id="lbl-flue-t" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#ff7c2a;fillColor=#1a1510;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Flue temp&lt;/b&gt;&#xa;180 °C" vertex="1">
-          <mxGeometry height="44" width="100" x="130" y="78" as="geometry" />
-        </mxCell>
-        <mxCell id="lbl-o2" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#ff7c2a;fillColor=#1a1510;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;O₂ flue&lt;/b&gt;&#xa;3.5 % vol dry" vertex="1">
-          <mxGeometry height="44" width="100" x="130" y="130" as="geometry" />
+        <mxCell id="lbl-o2" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#ff7c2a;fillColor=#1a1510;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;div&gt;&lt;b&gt;Flue Temp: 180ºC&lt;/b&gt;&lt;/div&gt;&lt;b&gt;O₂ flue:&amp;nbsp;&lt;/b&gt;3.5 %" vertex="1">
+          <mxGeometry height="67" width="100" x="155" y="82" as="geometry" />
         </mxCell>
         <mxCell id="lbl-drum-p" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#ef4444;fillColor=#1a1520;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Drum pressure&lt;/b&gt;&#xa;10.0 bar(g)&#xa;T_sat = 184 °C" vertex="1">
           <mxGeometry height="54" width="109" x="221" y="306" as="geometry" />
@@ -43,17 +60,17 @@
         <mxCell id="lbl-cond-drum" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#2563eb;fillColor=#0f1d2e;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Drum conductivity&lt;/b&gt;&#xa;2000 µS/cm" vertex="1">
           <mxGeometry height="57" width="109" x="221" y="361" as="geometry" />
         </mxCell>
-        <mxCell id="lbl-bd" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#a78bfa;fillColor=#1a1030;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Blowdown&lt;/b&gt;&#xa;0.5 % steam&#xa;≡ 5 kg/h" vertex="1">
+        <mxCell id="lbl-bd" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#a78bfa;fillColor=#1a1030;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Blowdown&lt;/b&gt;&lt;br&gt;0.5 % steam&lt;br&gt;(5 kg/h)" vertex="1">
           <mxGeometry height="55" width="108" x="210" y="476" as="geometry" />
         </mxCell>
-        <mxCell id="lbl-makeup" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#38bdf8;fillColor=#0a1f30;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Makeup water&lt;/b&gt;&lt;br&gt;300 kg/h&lt;div&gt;Condictivity: 10 uS/Cm&lt;/div&gt;" vertex="1">
+        <mxCell id="lbl-makeup" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#38bdf8;fillColor=#0a1f30;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Makeup water&lt;/b&gt;&lt;br&gt;280 kg/h&lt;div&gt;Condictivity: 10 uS/Cm&lt;/div&gt;" vertex="1">
           <mxGeometry height="44" width="110" x="322" y="100" as="geometry" />
         </mxCell>
         <mxCell id="lbl-fw-t" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#38bdf8;fillColor=#0a1f30;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;FW&lt;/b&gt;&lt;div&gt;1005 kg/h&lt;br&gt;120 °C&lt;/div&gt;" vertex="1">
           <mxGeometry height="44" width="75" x="366" y="401" as="geometry" />
         </mxCell>
-        <mxCell id="lbl-steam-flow" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#ef4444;fillColor=#1a1520;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Steam flow&lt;/b&gt;&#xa;1000 kg/h" vertex="1">
-          <mxGeometry height="30" width="69" x="591" y="257" as="geometry" />
+        <mxCell id="lbl-steam-flow" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#ef4444;fillColor=#1a1520;fontColor=#e6edf3;fontSize=10;rounded=1;" value="1000 kg/h" vertex="1">
+          <mxGeometry height="22" width="69" x="584" y="284" as="geometry" />
         </mxCell>
         <mxCell id="lbl-cond-ret" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#fbbf24;fillColor=#1a1800;fontColor=#e6edf3;fontSize=10;rounded=1;" value="&lt;b&gt;Cond. return&lt;/b&gt;&lt;br&gt;700 kg/h (70%)&lt;br&gt;80 °C&lt;div&gt;Conductivity: 20 uS/cm&lt;/div&gt;" vertex="1">
           <mxGeometry height="55" width="110" x="673" y="138" as="geometry" />
@@ -61,8 +78,10 @@
         <mxCell id="pipe-flue-1" edge="1" parent="1" source="boiler" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#ff7c2a;strokeWidth=3;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="economizer" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="pipe-flue-2" edge="1" parent="1" source="economizer" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#ff7c2a;strokeWidth=3;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="stack" value="">
-          <mxGeometry relative="1" as="geometry" />
+        <mxCell id="pipe-flue-2" edge="1" parent="1" source="economizer" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#ff7c2a;strokeWidth=3;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="206" y="151" as="targetPoint" />
+          </mxGeometry>
         </mxCell>
         <mxCell id="pipe-burner-boiler" edge="1" parent="1" source="burner" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#ff7c2a;strokeWidth=4;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.6;entryDx=0;entryDy=0;entryPerimeter=0;" target="boiler" value="">
           <mxGeometry relative="1" as="geometry" />
@@ -96,9 +115,8 @@
           <mxGeometry relative="1" x="-0.0103" y="-22" as="geometry">
             <mxPoint as="offset" />
             <Array as="points">
-              <mxPoint x="554" y="289" />
-              <mxPoint x="685" y="289" />
-              <mxPoint x="685" y="310" />
+              <mxPoint x="554" y="281" />
+              <mxPoint x="685" y="281" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -117,11 +135,11 @@
             <mxPoint x="420" y="205" as="sourcePoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="pipe-fw-da-boiler" edge="1" parent="1" source="deaerator" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#38bdf8;strokeWidth=3;endArrow=block;endFill=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.85;entryDx=0;entryDy=0;fontSize=9;fontColor=#38bdf8;labelBackgroundColor=none;" target="boiler" value="">
+        <mxCell id="pipe-fw-da-boiler" edge="1" parent="1" source="deaerator" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#38bdf8;strokeWidth=3;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.85;entryDx=0;entryDy=0;fontSize=9;fontColor=#38bdf8;labelBackgroundColor=none;" target="boiler" value="">
           <mxGeometry relative="1" y="6" as="geometry">
             <mxPoint as="offset" />
             <Array as="points">
-              <mxPoint x="449" y="208" />
+              <mxPoint x="449" y="192" />
               <mxPoint x="449" y="399" />
             </Array>
           </mxGeometry>
@@ -190,6 +208,9 @@
             <mxPoint x="664" y="481" as="sourcePoint" />
             <mxPoint x="686" y="481" as="targetPoint" />
           </mxGeometry>
+        </mxCell>
+        <mxCell id="b8rE7MtRaEYhCU-KSiza-1" parent="1" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#ef4444;fillColor=#1a1520;fontColor=#e6edf3;fontSize=10;rounded=1;" value="20 kg/h" vertex="1">
+          <mxGeometry height="22" width="69" x="522" y="243" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

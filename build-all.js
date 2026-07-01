@@ -10,7 +10,8 @@ const dirs = [
   'sankeyloop/SankeyLoop-Stable',
   'thermal-storage-calculator',
   'pinch-analysis',
-  'parallel-coordinates'
+  'parallel-coordinates',
+  'boiler-house-simulation'
 ];
 
 console.log("Starting build of all sub-projects...");

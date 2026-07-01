@@ -5,7 +5,7 @@ import { DEFAULT_FLOWS } from '../constants';
 import { SankeyDiagram } from '../components/SankeyDiagram';
 import { cn } from '../lib/utils';
 import { GuidedSetup } from '../components/GuidedSetup';
-import { buildSankeyData, computeAlignedX, resolveNodeColor, interpolateRgb, getExportDimensions, computeSankeyMetrics, computePreservedPositions, interpolateFlowColor, getNodeLabel } from '../lib/sankeyUtils';
+import { buildSankeyData, computeAlignedX, resolveNodeColor, interpolateRgb, getExportDimensions, computeSankeyMetrics, computePreservedPositions, interpolateFlowColor, getNodeLabel, parseFlowValue } from '../lib/sankeyUtils';
 import Plotly from 'plotly.js-dist-min';
 import * as gifenc from 'gifenc';
 
@@ -223,8 +223,8 @@ export default function Editor() {
             
             const newFlows = bFlows.map(fB => {
               const fA = aMap.get(getFlowKey(fB)) as Flow | undefined;
-              const vB = parseFloat(String(fB.Value).replace(',', '.')) || 0;
-              const vA = fA ? (parseFloat(String(fA.Value).replace(',', '.')) || 0) : 0;
+              const vB = parseFlowValue(fB.Value) || 0;
+              const vA = fA ? (parseFlowValue(fA.Value) || 0) : 0;
               const v = vB + (vA - vB) * t;
               return { ...fB, Value: v.toFixed(2), Color: interpolateFlowColor(fB.Color, fA?.Color, t, config) };
             });
@@ -524,8 +524,8 @@ export default function Editor() {
         
         const interpolatedFlows = sStart.flows.map(fB => {
           const fA = endMap.get(getFlowKey(fB)) as Flow | undefined;
-          const vB = parseFloat(String(fB.Value).replace(',', '.')) || 0;
-          const vA = fA ? (parseFloat(String(fA.Value).replace(',', '.')) || 0) : 0;
+          const vB = parseFlowValue(fB.Value) || 0;
+          const vA = fA ? (parseFlowValue(fA.Value) || 0) : 0;
           const v = vB + (vA - vB) * localT;
           return {
             ...fB,
@@ -537,7 +537,7 @@ export default function Editor() {
         const startMap = new Map(sStart.flows.map(f => [getFlowKey(f), f]));
         sEnd.flows.forEach(fA => {
           if (!startMap.has(getFlowKey(fA))) {
-             const vA = parseFloat(String(fA.Value).replace(',', '.')) || 0;
+             const vA = parseFlowValue(fA.Value) || 0;
              interpolatedFlows.push({ ...fA, Value: (vA * localT).toFixed(4) });
           }
         });
