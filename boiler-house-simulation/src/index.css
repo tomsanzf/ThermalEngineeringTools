@@ -7,6 +7,7 @@
   --surface: #111827;
   --surface-hover: #1f2937;
   --surface-glass: rgba(17, 24, 39, 0.7);
+  --popup-bg: rgba(17, 24, 39, 0.95);
   --border: #374151;
   --border-glow: #2563eb;
   
@@ -323,7 +324,7 @@ html, body, #root {
 .param-popup-card {
   position: absolute;
   width: 270px;
-  background-color: var(--surface-glass);
+  background-color: var(--popup-bg, var(--surface-glass));
   border: 1px solid var(--gas);
   border-radius: 8px;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
@@ -558,6 +559,7 @@ html, body, #root {
   --surface: #ffffff;
   --surface-hover: #f9fafb;
   --surface-glass: rgba(255, 255, 255, 0.75);
+  --popup-bg: rgba(255, 255, 255, 0.97);
   --border: #d1d5db;
   --text: #111827;
   --text-dim: #4b5563;
@@ -604,4 +606,63 @@ html, body, #root {
 .animations-disabled .pipe-group g > path:first-child {
   stroke-dasharray: none !important;
   animation: none !important;
+}
+
+/* Tabular layout for popups */
+.popup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: inherit;
+  font-size: 0.75rem;
+  color: var(--text);
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.popup-table td {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.35rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.popup-table .section-title {
+  background-color: rgba(255, 255, 255, 0.08);
+  font-weight: bold;
+  text-align: center;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.4rem;
+  border-left: none;
+  border-right: none;
+}
+
+.popup-table .display-val {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.popup-table input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: center;
+  font-family: inherit;
+  font-size: inherit;
+  outline: none;
+}
+
+.table-toggle {
+  display: flex;
+  width: 100%;
+  border-radius: 4px;
+}
+
+.table-toggle .toggle-btn {
+  flex: 1;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.7rem;
 }
