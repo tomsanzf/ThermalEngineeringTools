@@ -375,7 +375,7 @@ html, body, #root {
 }
 
 .popup-body {
-  padding: 0.8rem;
+  padding: 0.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
@@ -621,7 +621,7 @@ html, body, #root {
 
 .popup-table td {
   border: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 0.35rem;
+  padding: 0.2rem 0.35rem;
   text-align: center;
   vertical-align: middle;
 }

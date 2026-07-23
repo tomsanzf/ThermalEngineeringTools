@@ -722,7 +722,7 @@ const tFW = tFW_out;
     const containerRect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
     let x = e.clientX - containerRect.left + 12;
     let y = e.clientY - containerRect.top + 12;
-    if (key === 'boilerChemistry') {
+    if (key === 'boilerConductivity') {
       const containerWidth = container ? container.clientWidth : 845;
       const containerHeight = container ? container.clientHeight : 451;
       const scaleX = containerWidth / 845;
@@ -738,7 +738,7 @@ const tFW = tFW_out;
       const scaleX = containerWidth / 845;
       const scaleY = containerHeight / 451;
       x = 297 * scaleX;
-      y = 35 * scaleY;
+      y = 10 * scaleY;
       if (x + pw > containerWidth) {
         x = 167 * scaleX - pw - 12;
       }
@@ -747,7 +747,7 @@ const tFW = tFW_out;
     const containerWidth = container ? container.clientWidth : window.innerWidth;
     const containerHeight = container ? container.clientHeight : window.innerHeight;
     if (x + pw > containerWidth) {
-      if (key === 'boilerChemistry') {
+      if (key === 'boilerConductivity') {
         const condNode = document.querySelector('[data-cell-id="lbl-cond-drum"]');
         if (condNode) {
           const nodeRect = condNode.getBoundingClientRect();
@@ -1049,19 +1049,19 @@ const tFW = tFW_out;
                     <td colSpan={3} className="section-title">FeedWater Temperature</td>
                   </tr>
                   <tr>
-                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }}>Pre-heated Makeup Water</td>
-                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }} colSpan={2}>Pinch HX Inlet / Deaerator Outlet</td>
+                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }}>{S.pinchEnabled ? 'Pre-heated Makeup Water' : 'Makeup Water'}</td>
+                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }} colSpan={2}>{S.pinchEnabled ? 'Pinch HX Inlet / Deaerator Outlet' : 'Deaerator Outlet'}</td>
                   </tr>
                   <tr>
-                    <td className="display-val">{S.pinchEnabled ? `${R.tMakeupEffective.toFixed(1)} °C` : 'N/A'}</td>
+                    <td className="display-val">{S.pinchEnabled ? `${R.tMakeupEffective.toFixed(1)} °C` : `${S.makeupTemp.toFixed(1)} °C`}</td>
                     <td colSpan={2} className="display-val">{R.tDaea.toFixed(1)} °C</td>
                   </tr>
                   <tr>
-                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }}>Pinch HX Outlet / Eco Inlet</td>
+                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }}>{S.pinchEnabled ? 'Pinch HX Outlet / Eco Inlet' : 'Eco Inlet'}</td>
                     <td style={{ fontWeight: '500', fontSize: '0.7rem' }} colSpan={2}>Eco Outlet</td>
                   </tr>
                   <tr>
-                    <td className="display-val">{S.pinchEnabled ? `${R.tFWEffective.toFixed(1)} °C` : 'N/A'}</td>
+                    <td className="display-val">{S.pinchEnabled ? `${R.tFWEffective.toFixed(1)} °C` : `${R.tDaea.toFixed(1)} °C`}</td>
                     <td colSpan={2} className="display-val">{R.tFW.toFixed(1)} °C</td>
                   </tr>
 
@@ -1154,7 +1154,7 @@ const tFW = tFW_out;
             </div>
           </div>
         );
-      case 'boilerChemistry':
+      case 'boilerConductivity':
         return (
           <>
             <div className="form-row">
