@@ -683,21 +683,21 @@ export default function App() {
   return (
     <div className="h-screen bg-slate-950 text-slate-100 font-sans flex flex-col antialiased overflow-hidden">
       
-      {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center space-x-4">
           <a 
             href="../../index.html" 
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center cursor-pointer"
+            className="w-9 h-9 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center shrink-0 cursor-pointer"
+            title="Back to Portal"
           >
             <ArrowLeft className="w-5 h-5" />
           </a>
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="bg-indigo-500/10 text-indigo-400 text-xs px-2.5 py-0.5 rounded-full border border-indigo-500/20 font-medium tracking-wide">
-                Multi-Variable
+            <div className="flex flex-col">
+              <span className="font-mono text-[10px] font-extrabold tracking-[0.2em] text-indigo-400 uppercase leading-none mb-1">
+                Armstrong International
               </span>
-              <h1 className="text-xl font-bold tracking-tight text-white">Parallel Coordinate Plotter</h1>
+              <h1 className="text-xl font-bold tracking-tight text-white leading-tight">Parallel Coordinate Plotter</h1>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">Visualize high-dimensional engineering tradeoffs and scenario design spaces</p>
           </div>

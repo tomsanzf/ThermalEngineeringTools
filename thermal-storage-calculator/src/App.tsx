@@ -261,10 +261,9 @@ function App() {
   const accumulatorRef = useRef<number>(0);
   
   // Color mapping function based on temperature
-  const getTempColor = (temp: number) => {
-    const minT = 10;
-    const maxT = 90;
-    const percentage = Math.min(100, Math.max(0, ((temp - minT) / (maxT - minT)) * 100));
+  const getTempColor = (temp: number, minT: number = 10, maxT: number = 90) => {
+    const range = Math.max(1, maxT - minT);
+    const percentage = Math.min(100, Math.max(0, ((temp - minT) / range) * 100));
     const hue = 240 - (percentage / 100) * 240;
     return `hsl(${hue}, 85%, 45%)`;
   };
@@ -961,83 +960,122 @@ function App() {
       if (!solved) dischargeTime = elapsed / 3600;
     }
 
-    // 3. Find Equilibrium Profile (both active sources and sinks running)
+    // 3, 4, 5. Calculate Equilibrium and Cycle Times
     let eqProfile = Array(NUM_NODES).fill(globalColdestReturn);
+    let eqProfileOn = Array(NUM_NODES).fill(globalColdestReturn);
+    let systemCycles = false;
+    let cycleChargeTime = Infinity;
+    let cycleDischargeTime = Infinity;
+    let drainedToEqTime = Infinity;
+    let chargedToEqTime = Infinity;
+
     if (hasSources || hasSinks) {
       let currentT = Array(NUM_NODES).fill(globalColdestReturn);
-      let currentLoops = state.loops.map(l => ({ ...l }));
+      let currentLoops = state.loops.map(l => ({ ...l, isShutDown: false }));
       const dt = 15.0;
+      let elapsed = 0;
       const maxSteps = 2400;
       let prevT = [...currentT];
       let foundEq = false;
+      let phase = 1; // 1: Charge to max, 2: Discharge to min, 3: Charge to max
+
       for (let step = 0; step < maxSteps; step++) {
         const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
         currentT = result.temperatures;
         currentLoops = result.loops;
-        const maxChange = Math.max(...currentT.map((t, idx) => Math.abs(t - prevT[idx])));
-        if (maxChange < 0.0005 && step > 10) {
-          eqProfile = currentT;
-          foundEq = true;
-          break;
+        elapsed += dt;
+
+        if (phase === 1) {
+          const anySourceShutDown = currentLoops.some(l => l.isActive && l.type === 'source' && l.isShutDown);
+          if (anySourceShutDown) {
+            systemCycles = true;
+            eqProfile = [...currentT]; // Upper bound
+            drainedToEqTime = elapsed / 3600;
+            phase = 2;
+            elapsed = 0; // reset for next phase
+          } else {
+            const maxChange = Math.max(...currentT.map((t, idx) => Math.abs(t - prevT[idx])));
+            if (maxChange < 0.0005 && step > 10) {
+              eqProfile = [...currentT];
+              foundEq = true;
+              break;
+            }
+          }
+        } else if (phase === 2) {
+          // Waiting for source to turn ON
+          const allSourcesOn = currentLoops.every(l => {
+            if (l.isActive && l.type === 'source') return !l.isShutDown;
+            return true;
+          });
+          if (allSourcesOn) {
+            eqProfileOn = [...currentT]; // Lower bound
+            cycleDischargeTime = elapsed / 3600;
+            phase = 3;
+            elapsed = 0;
+          }
+        } else if (phase === 3) {
+          // Waiting for source to turn OFF again
+          const anySourceShutDown = currentLoops.some(l => l.isActive && l.type === 'source' && l.isShutDown);
+          if (anySourceShutDown) {
+            cycleChargeTime = elapsed / 3600;
+            break; // Done cycling phases
+          }
         }
         prevT = [...currentT];
       }
-      if (!foundEq) eqProfile = currentT;
-    }
 
-    // 4. Calculate time to reach equilibrium from fully drained
-    let drainedToEqTime = Infinity;
-    if (hasSources || hasSinks) {
-      let currentT = Array(NUM_NODES).fill(globalColdestReturn);
-      let currentLoops = state.loops.map(l => ({ ...l }));
-      const dt = 15.0;
-      let elapsed = 0;
-      const maxSteps = 2400;
-      let solved = false;
-      for (let step = 0; step < maxSteps; step++) {
-        const isDone = currentT.every((temp, idx) => Math.abs(temp - eqProfile[idx]) < 0.5);
-        if (isDone) {
-          drainedToEqTime = elapsed / 3600;
-          solved = true;
-          break;
+      if (!systemCycles) {
+        if (!foundEq) eqProfile = currentT;
+        
+        // Original Step 4: drained to eq
+        currentT = Array(NUM_NODES).fill(globalColdestReturn);
+        currentLoops = state.loops.map(l => ({ ...l, isShutDown: false }));
+        elapsed = 0;
+        let solved = false;
+        for (let step = 0; step < maxSteps; step++) {
+          const isDone = currentT.every((temp, idx) => Math.abs(temp - eqProfile[idx]) < 0.5);
+          if (isDone) {
+            drainedToEqTime = elapsed / 3600;
+            solved = true;
+            break;
+          }
+          const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
+          currentT = result.temperatures;
+          currentLoops = result.loops;
+          elapsed += dt;
         }
-        const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
-        currentT = result.temperatures;
-        currentLoops = result.loops;
-        elapsed += dt;
-      }
-      if (!solved) drainedToEqTime = elapsed / 3600;
-    }
+        if (!solved) drainedToEqTime = elapsed / 3600;
 
-    // 5. Calculate time to reach equilibrium from fully charged (max achievable)
-    let chargedToEqTime = Infinity;
-    if (hasSources || hasSinks) {
-      const startTemps = hasSources ? targetTemps : Array(NUM_NODES).fill(T_high);
-      let currentT = [...startTemps];
-      let currentLoops = state.loops.map(l => ({ ...l }));
-      const dt = 15.0;
-      let elapsed = 0;
-      const maxSteps = 2400;
-      let solved = false;
-      for (let step = 0; step < maxSteps; step++) {
-        const isDone = currentT.every((temp, idx) => Math.abs(temp - eqProfile[idx]) < 0.5);
-        if (isDone) {
-          chargedToEqTime = elapsed / 3600;
-          solved = true;
-          break;
+        // Original Step 5: charged to eq
+        const startTemps = hasSources ? targetTemps : Array(NUM_NODES).fill(T_high);
+        currentT = [...startTemps];
+        currentLoops = state.loops.map(l => ({ ...l, isShutDown: false }));
+        elapsed = 0;
+        solved = false;
+        for (let step = 0; step < maxSteps; step++) {
+          const isDone = currentT.every((temp, idx) => Math.abs(temp - eqProfile[idx]) < 0.5);
+          if (isDone) {
+            chargedToEqTime = elapsed / 3600;
+            solved = true;
+            break;
+          }
+          const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
+          currentT = result.temperatures;
+          currentLoops = result.loops;
+          elapsed += dt;
         }
-        const result = simulateStep({ temperatures: currentT, ports: state.ports, loops: currentLoops }, params, dt);
-        currentT = result.temperatures;
-        currentLoops = result.loops;
-        elapsed += dt;
+        if (!solved) chargedToEqTime = elapsed / 3600;
       }
-      if (!solved) chargedToEqTime = elapsed / 3600;
     }
 
     return {
       chargeTime,
       dischargeTime,
       eqProfile,
+      eqProfileOn,
+      systemCycles,
+      cycleChargeTime,
+      cycleDischargeTime,
       drainedToEqTime,
       chargedToEqTime
     };
@@ -1107,13 +1145,19 @@ function App() {
 
   const calculatedChargeTimeHours = dryRunResults.chargeTime;
   const timeToDischargeOnly = dryRunResults.dischargeTime;
-
-  const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink').length;
+const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink').length;
   const chargeFromDrainedTime = activeSinksCount > 0 ? dryRunResults.drainedToEqTime : dryRunResults.chargeTime;
   const dischargeFromMaxTime = activeSinksCount > 0 ? dryRunResults.chargedToEqTime : 0;
 
   const equilibriumCapacityKWh = eqSegments.reduce((sum, seg) => sum + (seg.eqTemp > T_baseline ? (seg.volume * 4180 * (seg.eqTemp - T_baseline)) / 3600 : 0), 0);
   const equilibriumPercent = totalMaxCapacityKWh > 0 ? Math.min(100, (equilibriumCapacityKWh / totalMaxCapacityKWh) * 100) : 0;
+
+  const getProfileCapacityKWh = (profile: number[]) => {
+    const V_node = params.tankVolume / NUM_NODES;
+    return profile.reduce((sum, temp) => sum + (temp > T_baseline ? (V_node * 4180 * (temp - T_baseline)) / 3600 : 0), 0);
+  };
+  const upperCapacityKWh = getProfileCapacityKWh(dryRunResults.eqProfile);
+  const lowerCapacityKWh = getProfileCapacityKWh(dryRunResults.eqProfileOn);
 
 
   const formatTime = (hours: number) => {
@@ -1128,23 +1172,46 @@ function App() {
   const minTime = tempHistory.length > 0 ? tempHistory[0].time : 0;
   const maxTime = tempHistory.length > 0 ? Math.max(minTime + 0.1, tempHistory[tempHistory.length - 1].time) : 1;
 
+  const cycleData = dryRunResults.systemCycles ? [
+    { 
+      timeHour: 0, 
+      timeLabel: "0h", 
+      chargeKWh: lowerCapacityKWh,
+    },
+    { 
+      timeHour: dryRunResults.cycleChargeTime, 
+      timeLabel: formatTime(dryRunResults.cycleChargeTime), 
+      chargeKWh: upperCapacityKWh,
+      dischargeKWh: upperCapacityKWh,
+      deltaLabel: `Δ ${formatTime(dryRunResults.cycleChargeTime)}`,
+      deltaColor: '#f97316'
+    },
+    { 
+      timeHour: dryRunResults.cycleChargeTime + dryRunResults.cycleDischargeTime, 
+      timeLabel: formatTime(dryRunResults.cycleChargeTime + dryRunResults.cycleDischargeTime), 
+      dischargeKWh: lowerCapacityKWh,
+      deltaLabel: `Δ ${formatTime(dryRunResults.cycleDischargeTime)}`,
+      deltaColor: '#a855f7'
+    }
+  ] : [];
+
   return (
     <div className="h-screen bg-slate-950 text-slate-100 font-sans flex flex-col antialiased overflow-hidden">
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-30">
+      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center space-x-4">
           <a 
             href={import.meta.env.DEV ? "http://localhost:5000/" : "../../index.html"} 
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center"
+            className="w-9 h-9 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center shrink-0 cursor-pointer"
+            title="Back to Portal"
           >
             <ArrowLeft className="w-5 h-5" />
           </a>
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="bg-orange-500/10 text-orange-400 text-xs px-2.5 py-0.5 rounded-full border border-orange-500/20 font-medium tracking-wide">
-                Thermal Storage
+            <div className="flex flex-col">
+              <span className="font-mono text-[10px] font-extrabold tracking-[0.2em] text-orange-500 uppercase leading-none mb-1">
+                Armstrong International
               </span>
-              <h1 className="text-xl font-bold tracking-tight text-white">Stratified Tank Calculator</h1>
+              <h1 className="text-xl font-bold tracking-tight text-white leading-tight">Stratified Thermal Storage Calc</h1>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">Simulate stratified thermal energy storage with drag-and-drop connections</p>
           </div>
@@ -1212,10 +1279,10 @@ function App() {
             {showResetDropdown && (
               <>
                 <div 
-                  className="fixed inset-0 z-20 cursor-default" 
+                  className="fixed inset-0 z-40 cursor-default" 
                   onClick={() => setShowResetDropdown(false)} 
                 />
-                <div className="absolute left-[-20px] md:left-auto md:right-0 top-11 w-48 bg-slate-900 border border-slate-800 rounded-lg shadow-xl py-1 z-30 select-none animate-fade-in text-[11px] text-slate-350">
+                <div className="absolute left-[-20px] md:left-auto md:right-0 top-11 w-48 bg-slate-900 border border-slate-800 rounded-lg shadow-xl py-1 z-50 select-none animate-fade-in text-[11px] text-slate-350">
                   <button
                     onClick={() => {
                       resetProfile('fullyCharged');
@@ -1846,7 +1913,7 @@ function App() {
                         <div 
                           key={nodeIndex}
                           style={{ 
-                            backgroundColor: getTempColor(temp),
+                            backgroundColor: getTempColor(temp, T_low, T_high),
                             height: `${100 / NUM_NODES}%`
                           }}
                           className="w-full border-b border-white/[0.03] last:border-b-0"
@@ -2039,14 +2106,21 @@ function App() {
                         const sensorHeight = returnPort.height + (sensLoc / 100) * (supplyPort.height - returnPort.height);
                         const yPos = tankTop + tankHeight * (1 - sensorHeight);
                         const cleanName = loop.name.length > 12 ? loop.name.substring(0, 10) + '..' : loop.name;
+
+                        const sensorIdx = Math.min(NUM_NODES - 1, Math.max(0, Math.floor(sensorHeight * NUM_NODES)));
+                        const currentTemp = state.temperatures[sensorIdx] || 0;
+                        const deltaTDesign = Math.abs(loop.designTempSupply - loop.designTempReturn);
+                        const triggerVal = loop.triggerOn !== undefined ? loop.triggerOn : 0;
+                        const T_on = loop.designTempReturn + (triggerVal / 100) * deltaTDesign;
+
                         return (
                           <div 
                             key={`sensor-line-${loop.id}`}
                             style={{ top: `${yPos}px`, left: `${tankLeft}px`, width: '150px' }}
                             className="absolute h-px border-t border-dashed border-amber-400/80 z-20 pointer-events-none"
                           >
-                            <span className="absolute -left-24 -top-2.5 bg-slate-950/90 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[9px] scale-90 whitespace-nowrap shadow-md">
-                              {cleanName} Sensor ({sensLoc}%)
+                            <span className="absolute -left-32 -top-2.5 bg-slate-950/90 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[9px] scale-90 whitespace-nowrap shadow-md">
+                              {cleanName} OnSwitch: {currentTemp.toFixed(1)}/{T_on.toFixed(1)}ºC
                             </span>
                           </div>
                         );
@@ -2171,34 +2245,43 @@ function App() {
                                 <>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div>
-                                      <span className="text-slate-400 text-[10px] block mb-1">Design Power (kW)</span>
-                                      <input
-                                        type="number"
-                                        value={loop.designPower}
-                                        onChange={(e) => updateLoopParam(loop.id, 'designPower', Number(e.target.value))}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                      <span className="text-slate-400 text-[10px] block mb-1">Design Power</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          value={loop.designPower}
+                                          onChange={(e) => updateLoopParam(loop.id, 'designPower', Number(e.target.value))}
+                                          className="w-full bg-slate-950 border border-slate-850 rounded pl-1.5 pr-6 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">kW</span>
+                                      </div>
                                     </div>
                                     <div>
-                                      <span className="text-slate-400 text-[10px] block mb-1">Design Return Temp (°C)</span>
-                                      <input
-                                        type="number"
-                                        value={loop.designTempReturn}
-                                        onChange={(e) => updateLoopParam(loop.id, 'designTempReturn', Number(e.target.value))}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                      <span className="text-slate-400 text-[10px] block mb-1">Design Return Temp</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          value={loop.designTempReturn}
+                                          onChange={(e) => updateLoopParam(loop.id, 'designTempReturn', Number(e.target.value))}
+                                          className="w-full bg-slate-950 border border-slate-850 rounded pl-1.5 pr-5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">ºC</span>
+                                      </div>
                                     </div>
                                   </div>
 
                                   <div className="grid grid-cols-2 gap-2">
                                     <div>
-                                      <span className="text-slate-400 text-[10px] block mb-1">Design Supply Temp (°C)</span>
-                                      <input
-                                        type="number"
-                                        value={loop.designTempSupply}
-                                        onChange={(e) => updateLoopParam(loop.id, 'designTempSupply', Number(e.target.value))}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                      <span className="text-slate-400 text-[10px] block mb-1">Design Supply Temp</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          value={loop.designTempSupply}
+                                          onChange={(e) => updateLoopParam(loop.id, 'designTempSupply', Number(e.target.value))}
+                                          className="w-full bg-slate-950 border border-slate-850 rounded pl-1.5 pr-5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">ºC</span>
+                                      </div>
                                     </div>
                                     <div className="flex flex-col justify-between">
                                       <span className="text-slate-400 text-[10px] block mb-1">Control Mode</span>
@@ -2218,34 +2301,43 @@ function App() {
                                 <>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div>
-                                      <span className="text-slate-400 text-[10px] block mb-1">Design Power (kW)</span>
-                                      <input
-                                        type="number"
-                                        value={loop.designPower}
-                                        onChange={(e) => updateLoopParam(loop.id, 'designPower', Number(e.target.value))}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                      <span className="text-slate-400 text-[10px] block mb-1">Design Power</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          value={loop.designPower}
+                                          onChange={(e) => updateLoopParam(loop.id, 'designPower', Number(e.target.value))}
+                                          className="w-full bg-slate-950 border border-slate-850 rounded pl-1.5 pr-6 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">kW</span>
+                                      </div>
                                     </div>
                                     <div>
-                                      <span className="text-slate-400 text-[10px] block mb-1">Design Supply Temp (°C)</span>
-                                      <input
-                                        type="number"
-                                        value={loop.designTempSupply}
-                                        onChange={(e) => updateLoopParam(loop.id, 'designTempSupply', Number(e.target.value))}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                      <span className="text-slate-400 text-[10px] block mb-1">Design Supply Temp</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          value={loop.designTempSupply}
+                                          onChange={(e) => updateLoopParam(loop.id, 'designTempSupply', Number(e.target.value))}
+                                          className="w-full bg-slate-950 border border-slate-850 rounded pl-1.5 pr-5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">ºC</span>
+                                      </div>
                                     </div>
                                   </div>
 
                                   <div className="grid grid-cols-2 gap-2">
                                     <div>
-                                      <span className="text-slate-400 text-[10px] block mb-1">Design Return Temp (°C)</span>
-                                      <input
-                                        type="number"
-                                        value={loop.designTempReturn}
-                                        onChange={(e) => updateLoopParam(loop.id, 'designTempReturn', Number(e.target.value))}
-                                        className="w-full bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                      <span className="text-slate-400 text-[10px] block mb-1">Design Return Temp</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          value={loop.designTempReturn}
+                                          onChange={(e) => updateLoopParam(loop.id, 'designTempReturn', Number(e.target.value))}
+                                          className="w-full bg-slate-950 border border-slate-850 rounded pl-1.5 pr-5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">ºC</span>
+                                      </div>
                                     </div>
                                     <div className="flex flex-col justify-between">
                                       <span className="text-slate-400 text-[10px] block mb-1">Control Mode</span>
@@ -2269,52 +2361,61 @@ function App() {
                                   
                                   <div className="grid grid-cols-3 gap-2">
                                     <div>
-                                      <span className="text-slate-500 text-[8px] block mb-1 leading-tight text-center font-medium">Turndown (%)</span>
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        max="100"
-                                        value={loop.turndownability ?? 0}
-                                        onChange={(e) => {
-                                          const val = Math.min(100, Math.max(0, Number(e.target.value)));
-                                          updateLoopParam(loop.id, 'turndownability', val);
-                                          if ((loop.triggerOn ?? 0) > val) {
+                                      <span className="text-slate-500 text-[10px] block mb-1 leading-tight text-center font-medium">Turndown</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max="100"
+                                          value={loop.turndownability ?? 0}
+                                          onChange={(e) => {
+                                            const val = Math.min(100, Math.max(0, Number(e.target.value)));
+                                            updateLoopParam(loop.id, 'turndownability', val);
+                                            if ((loop.triggerOn ?? 0) > val) {
+                                              updateLoopParam(loop.id, 'triggerOn', val);
+                                            }
+                                          }}
+                                          className="w-full bg-slate-950 border border-slate-855 rounded pl-1 pr-3 py-0.5 text-center font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">%</span>
+                                      </div>
+                                    </div>
+
+                                    <div>
+                                      <span className="text-slate-500 text-[10px] block mb-1 leading-tight text-center font-medium">Trigger on</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={loop.turndownability ?? 0}
+                                          value={loop.triggerOn ?? 0}
+                                          onChange={(e) => {
+                                            const maxVal = loop.turndownability ?? 0;
+                                            const val = Math.min(maxVal, Math.max(0, Number(e.target.value)));
                                             updateLoopParam(loop.id, 'triggerOn', val);
-                                          }
-                                        }}
-                                        className="w-full bg-slate-950 border border-slate-855 rounded px-1 py-0.5 text-center font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                          }}
+                                          className="w-full bg-slate-950 border border-slate-855 rounded pl-1 pr-3 py-0.5 text-center font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">%</span>
+                                      </div>
                                     </div>
 
                                     <div>
-                                      <span className="text-slate-500 text-[8px] block mb-1 leading-tight text-center font-medium">Trigger on (%)</span>
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        max={loop.turndownability ?? 0}
-                                        value={loop.triggerOn ?? 0}
-                                        onChange={(e) => {
-                                          const maxVal = loop.turndownability ?? 0;
-                                          const val = Math.min(maxVal, Math.max(0, Number(e.target.value)));
-                                          updateLoopParam(loop.id, 'triggerOn', val);
-                                        }}
-                                        className="w-full bg-slate-950 border border-slate-855 rounded px-1 py-0.5 text-center font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
-                                    </div>
-
-                                    <div>
-                                      <span className="text-slate-500 text-[8px] block mb-1 leading-tight text-center font-medium">Sensor Loc (%)</span>
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        max="100"
-                                        value={loop.sensorLocation ?? 50}
-                                        onChange={(e) => {
-                                          const val = Math.min(100, Math.max(0, Number(e.target.value)));
-                                          updateLoopParam(loop.id, 'sensorLocation', val);
-                                        }}
-                                        className="w-full bg-slate-950 border border-slate-855 rounded px-1 py-0.5 text-center font-mono text-xs text-white focus:outline-none focus:border-slate-700"
-                                      />
+                                      <span className="text-slate-500 text-[10px] block mb-1 leading-tight text-center font-medium">Sensor Loc</span>
+                                      <div className="relative">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max="100"
+                                          value={loop.sensorLocation ?? 50}
+                                          onChange={(e) => {
+                                            const val = Math.min(100, Math.max(0, Number(e.target.value)));
+                                            updateLoopParam(loop.id, 'sensorLocation', val);
+                                          }}
+                                          className="w-full bg-slate-950 border border-slate-855 rounded pl-1 pr-3 py-0.5 text-center font-mono text-xs text-white focus:outline-none focus:border-slate-700"
+                                        />
+                                        <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">%</span>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -2375,11 +2476,14 @@ function App() {
                       </div>
                       
                       {/* Time to balance title */}
-                      <div className="flex justify-center items-center p-2 border-b border-slate-800/50 text-slate-300 font-medium bg-slate-900/40">
-                        Time to balance: {equilibriumCapacityKWh.toFixed(1)} kWh ({equilibriumPercent.toFixed(0)}%)
+                      <div className="flex justify-center items-center p-2 border-b border-slate-800/50 text-slate-300 font-medium bg-slate-900/40 text-center px-4">
+                        {dryRunResults.systemCycles 
+                          ? `Cycling eq from ${lowerCapacityKWh.toFixed(1)} to ${upperCapacityKWh.toFixed(1)} kWh`
+                          : `Time to balance: ${equilibriumCapacityKWh.toFixed(1)} kWh (${equilibriumPercent.toFixed(0)}%)`
+                        }
                         <button
                           onClick={() => setShowNetExplanation(true)}
-                          className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700"
+                          className="w-3.5 h-3.5 ml-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full flex items-center justify-center text-[9px] font-bold cursor-pointer transition border border-slate-700 flex-shrink-0"
                           title="Explain active sinks and sources equilibrium"
                         >
                           ?
@@ -2387,15 +2491,13 @@ function App() {
                       </div>
 
                       {/* Detail rows */}
-                      <div className="flex flex-col font-mono text-slate-400 bg-slate-900/20">
-                        <div className="flex border-b border-slate-800/50">
-                          <div className="flex-1 p-1.5 text-right border-r border-slate-800/50 flex items-center justify-end pr-3">Charging from drained:</div>
-                          <div className="w-[100px] p-1.5 text-center font-bold text-emerald-400 flex items-center justify-center">{formatTime(chargeFromDrainedTime)}</div>
-                        </div>
-                        <div className="flex">
-                          <div className="flex-1 p-1.5 text-right border-r border-slate-800/50 flex items-center justify-end pr-3">Discharging from Achievable max:</div>
-                          <div className="w-[100px] p-1.5 text-center font-bold text-purple-400 flex items-center justify-center">{formatTime(dischargeFromMaxTime)}</div>
-                        </div>
+                      <div className="flex justify-between items-center p-1.5 px-3 border-b border-slate-800/50 bg-slate-900/40">
+                        <span className="text-slate-400 font-medium text-[11px]">{dryRunResults.systemCycles ? "Cycle Charge Time:" : "Charging from drained:"}</span>
+                        <span className="font-mono text-emerald-400 font-bold text-[11px]">{formatTime(dryRunResults.systemCycles ? dryRunResults.cycleChargeTime : chargeFromDrainedTime)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-1.5 px-3 border-b border-slate-800/50 bg-slate-900/40">
+                        <span className="text-slate-400 font-medium text-[11px]">{dryRunResults.systemCycles ? "Cycle Discharge Time:" : "Discharging from Achievable max:"}</span>
+                        <span className="font-mono text-purple-400 font-bold text-[11px]">{formatTime(dryRunResults.systemCycles ? dryRunResults.cycleDischargeTime : dischargeFromMaxTime)}</span>
                       </div>
                     </div>
 
@@ -2454,7 +2556,7 @@ function App() {
                       />
                       <YAxis 
                         type="number"
-                        domain={[0, 100]} 
+                        domain={[T_low, T_high]} 
                         tick={{ fill: '#64748b', fontSize: 10 }}
                         stroke="#334155"
                         unit="°C"
@@ -2478,9 +2580,34 @@ function App() {
                         }}
                       />
                       <Legend 
-                        wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }}
-                        verticalAlign="bottom"
-                        height={36}
+                        wrapperStyle={{ fontSize: '10px' }}
+                        layout="vertical"
+                        verticalAlign="middle"
+                        align="right"
+                        content={(props: any) => {
+                          const { payload } = props;
+                          if (!payload) return null;
+                          const order: { [key: string]: number } = {
+                            'Top (100%)': 0,
+                            '75% Height': 1,
+                            '50% Height': 2,
+                            '25% Height': 3,
+                            'Bottom (0%)': 4
+                          };
+                          const sorted = [...payload].sort((a: any, b: any) => {
+                            return (order[a.value] ?? 99) - (order[b.value] ?? 99);
+                          });
+                          return (
+                            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                              {sorted.map((entry: any, idx: number) => (
+                                <li key={idx} style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                                  <span style={{ display: 'inline-block', width: 14, height: 2, backgroundColor: entry.color, borderRadius: 1 }} />
+                                  <span style={{ color: entry.color, fontSize: 10 }}>{entry.value}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          );
+                        }}
                       />
                       <Line 
                         type="monotone" 
@@ -2550,7 +2677,7 @@ function App() {
             {/* Modal Body */}
             <div className="flex-1 overflow-y-auto space-y-4 pr-2">
               
-              {/* Top Section: Side-by-Side Table and Tank Visual */}
+                {/* Top Section: Side-by-Side Table and Tank Visual */}
               <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_260px] gap-6 items-start">
                 
                 {/* Left Column: Top-Down segments table */}
@@ -2835,13 +2962,14 @@ function App() {
         </div>
       )}
 
+
       {showNetExplanation && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-6xl w-full max-h-[90vh] shadow-2xl relative flex flex-col overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
               <h3 className="text-sm font-bold text-white">
-                Active Sinks & Sources (Equilibrium Analysis)
+                {dryRunResults.systemCycles ? "Active Sinks & Sources (Cycling Analysis)" : "Active Sinks & Sources (Equilibrium Analysis)"}
               </h3>
               <button 
                 onClick={() => setShowNetExplanation(false)}
@@ -2853,9 +2981,97 @@ function App() {
 
             {/* Modal Body */}
             <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-              
+              {dryRunResults.systemCycles ? (
+                <div className="flex flex-col space-y-6">
+                  {/* Top Section: Chart */}
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 min-h-[300px]">
+                    <h4 className="font-semibold text-slate-300 text-xs mb-4 text-center">Cyclic Energy Variation (kWh)</h4>
+                    <ResponsiveContainer width="100%" height={260}>
+                      <LineChart data={cycleData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis 
+                          dataKey="timeHour" 
+                          type="number" 
+                          domain={[0, 'dataMax']} 
+                          ticks={[0, dryRunResults.cycleChargeTime, dryRunResults.cycleChargeTime + dryRunResults.cycleDischargeTime]}
+                          tick={(props) => {
+                            const { x, y, payload } = props;
+                            const pt = cycleData.find(d => Math.abs(d.timeHour - payload.value) < 0.01);
+                            if (!pt) return null;
+                            return (
+                              <g transform={`translate(${x},${y})`}>
+                                <text x={0} y={15} fill="#94a3b8" fontSize={10} textAnchor="middle">{pt.timeLabel}</text>
+                                {pt.deltaLabel && <text x={0} dx={-10} y={-8} fill={pt.deltaColor} fontSize={10} textAnchor="end" fontWeight="bold">{pt.deltaLabel}</text>}
+                              </g>
+                            );
+                          }}
+                          stroke="#475569" 
+                        />
+                        <YAxis 
+                          domain={[
+                            (dataMin: number) => Math.max(0, Math.floor(dataMin * 0.85)),
+                            (dataMax: number) => Math.ceil(dataMax * 1.15)
+                          ]} 
+                          stroke="#475569" 
+                          tick={{ fill: '#94a3b8', fontSize: 10 }}
+                        />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', fontSize: '12px', color: '#cbd5e1' }}
+                          formatter={(value) => [`${value.toFixed(1)} kWh`, 'Energy']}
+                          labelFormatter={(label) => {
+                            const pt = cycleData.find(d => Math.abs(d.timeHour - label) < 0.01);
+                            return pt ? `Cumulative Time: ${pt.timeLabel}` : `Time: ${Number(label).toFixed(2)}h`;
+                          }}
+                        />
+                        <Line type="linear" dataKey="chargeKWh" stroke="#f97316" strokeWidth={3} dot={{ r: 4, fill: '#f97316' }} connectNulls />
+                        <Line type="linear" dataKey="dischargeKWh" stroke="#a855f7" strokeWidth={3} dot={{ r: 4, fill: '#a855f7' }} connectNulls />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  
+                  {/* Explanations */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs text-slate-405 leading-relaxed bg-slate-900/60 p-4 border border-slate-800 rounded-xl">
+                    <div>
+                      <h4 className="font-semibold text-slate-200 mb-2">1. Hysteresis Cycling Detected</h4>
+                      <p className="mb-2">
+                        Occurs when the heating load drops below the source's minimum turndown power. Because the source cannot reduce its output any further, excess heat accumulates in the tank until the upper temperature limit is reached, forcing the source to shut down.
+                      </p>
+                      <p>
+                        Once the tank temperature drops below the restart threshold, the source turns back on—creating a repeating charge/discharge cycle.
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-slate-200 mb-2">2. Cycle Times</h4>
+                      <div className="flex flex-col space-y-3 mt-2">
+                        <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-orange-500/20">
+                          <span className="text-orange-400 font-medium">Cycle Charge Time:</span>
+                          <span className="font-mono text-orange-400 font-bold text-sm">{formatTime(dryRunResults.cycleChargeTime)}</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-purple-500/20">
+                          <span className="text-purple-400 font-medium">Cycle Discharge Time:</span>
+                          <span className="font-mono text-purple-400 font-bold text-sm">{formatTime(dryRunResults.cycleDischargeTime)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-slate-200 mb-2">3. How Cycle Times Are Calculated</h4>
+                      <p className="mb-2">
+                        Both times are determined by running a fast transient simulation of the tank, starting from the cycling equilibrium state.
+                      </p>
+                      <p className="mb-2">
+                        <span className="text-orange-400 font-semibold">Charge Time:</span> From the moment the source turns back on (lower equilibrium), the simulation runs until the sensor temperature reaches the turndown OFF threshold.
+                      </p>
+                      <p>
+                        <span className="text-purple-400 font-semibold">Discharge Time:</span> From the moment the source shuts off (upper equilibrium), the simulation runs until the sensor temperature drops back below the trigger ON threshold.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+
               {/* Top Section: Side-by-Side Table and Tank Visual */}
-              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_260px] gap-6 items-start">
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-6 items-start">
                 
                 {/* Left Column: Top-Down segments table */}
                 <div className="overflow-x-auto">
@@ -2871,67 +3087,64 @@ function App() {
                       <div className="text-right">Time</div>
                       <div className="text-center">Eq. Temp</div>
                     </div>
-                    
-                    {/* Data Rows */}
+                    {/* Body Rows */}
                     <div className="divide-y divide-slate-800/50 flex-1">
-                      {eqSegments.map((seg, idx) => {
-                        const isUnheatable = seg.coveringSources.length === 0;
-                        const height = Math.max(38, (seg.yStart - seg.yEnd) * 240);
-                        const qEq = seg.eqTemp > T_baseline ? (seg.volume * 4180 * (seg.eqTemp - T_baseline)) / 3600 : 0;
-                        const sumPower = seg.coveringSources.reduce((sum, l) => sum + l.designPower, 0);
-                        const timeStr = sumPower > 0 ? (qEq / sumPower).toFixed(1) + ' h' : '-';
-
+                      {[...eqSegments].reverse().map((seg, idx) => {
+                        const originalIdx = eqSegments.indexOf(seg);
+                        const isHeated = seg.eqTemp > T_baseline;
+                        const height = Math.max(38, (seg.yEnd - seg.yStart) * 240);
+                        const qEq = isHeated ? (seg.volume * 4180 * (seg.eqTemp - T_baseline)) / 3600 : 0;
+                        const sumPower = isHeated ? seg.coveringSources.reduce((sum, l) => sum + l.designPower, 0) : 0;
+                        const timeToHeatStr = isHeated && sumPower > 0 ? (qEq / sumPower).toFixed(1) + ' h' : '—';
+                        
                         return (
                           <div 
-                            key={idx}
+                            key={originalIdx} 
                             style={{ height: `${height}px` }}
                             className="grid grid-cols-[50px_70px_55px_minmax(0,1fr)_minmax(0,1fr)_60px_60px_65px] items-center px-3 hover:bg-slate-800/20 text-slate-350 transition-colors"
                           >
-                            <div className="font-semibold text-slate-400">#{idx + 1}</div>
-                            <div className="font-mono text-[10px]">{(seg.yEnd * 100).toFixed(0)}% — {(seg.yStart * 100).toFixed(0)}%</div>
+                            <div className="font-semibold text-slate-400">#{originalIdx + 1}</div>
+                            <div className="font-mono text-[10px]">{(seg.yStart * 100).toFixed(0)}% — {(seg.yEnd * 100).toFixed(0)}%</div>
                             <div className="font-mono text-[10px]">{seg.volume.toFixed(2)} m³</div>
-                          
-                          {/* Covering Sources */}
-                          <div className="flex flex-wrap gap-1 pr-2">
-                            {seg.coveringSources.length > 0 ? seg.coveringSources.map(l => (
-                              <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
-                                {l.name}
+                            
+                            {/* Sources */}
+                            <div className="flex flex-wrap gap-1 pr-2">
+                              {seg.coveringSources.length > 0 ? (
+                                seg.coveringSources.map(l => (
+                                  <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold" style={{ backgroundColor: `${l.color}15`, color: l.color, border: `1px solid ${l.color}30` }}>{l.name}</span>
+                                ))
+                              ) : (
+                                <span className="text-slate-655 italic text-[10px]">-</span>
+                              )}
+                            </div>
+                            
+                            {/* Sinks */}
+                            <div className="flex flex-wrap gap-1 pr-2">
+                              {seg.coveringSinks.length > 0 ? (
+                                seg.coveringSinks.map(l => (
+                                  <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-800/80 text-blue-300 border border-slate-700">{l.name}</span>
+                                ))
+                              ) : (
+                                <span className="text-slate-655 italic text-[10px]">-</span>
+                              )}
+                            </div>
+                            
+                            <div className="font-mono text-[10px] text-emerald-400 text-right pr-2">
+                              {qEq.toFixed(1)} kWh
+                            </div>
+                            
+                            <div className="font-mono text-[10px] text-slate-300 text-right pr-2">
+                              {timeToHeatStr}
+                            </div>
+                            
+                            <div className="text-center">
+                              <span className="font-mono text-[10px] text-amber-400 font-semibold bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700/50">
+                                {seg.eqTemp.toFixed(1)}°C
                               </span>
-                            )) : (
-                              <span className="text-slate-600 italic text-[9px]">-</span>
-                            )}
+                            </div>
                           </div>
-
-                          {/* Covering Sinks */}
-                          <div className="flex flex-wrap gap-1 pr-2">
-                            {seg.coveringSinks.length > 0 ? seg.coveringSinks.map(l => (
-                              <span key={l.id} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 whitespace-nowrap">
-                                {l.name}
-                              </span>
-                            )) : (
-                              <span className="text-slate-600 italic text-[9px]">-</span>
-                            )}
-                          </div>
-
-                          {/* Capacity */}
-                          <div className="font-mono text-[10px] text-emerald-400 text-right pr-2">
-                            {qEq.toFixed(1)} kWh
-                          </div>
-
-                          {/* Time */}
-                          <div className="font-mono text-[10px] text-slate-300 text-right pr-2">
-                            {timeStr}
-                          </div>
-
-                          {/* Equilibrium Temp */}
-                          <div className="text-center">
-                            <span className={`font-mono font-bold px-1.5 py-0.5 rounded text-[10px] ${isUnheatable ? 'text-slate-500 bg-slate-800/50' : 'text-amber-400 bg-amber-500/10'}`}>
-                              {seg.eqTemp.toFixed(1)}°C
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
                     </div>
                     {/* Totals Row */}
                     <div className="grid grid-cols-[50px_70px_55px_minmax(0,1fr)_minmax(0,1fr)_60px_60px_65px] bg-slate-900/60 border-t border-slate-800 text-slate-200 font-bold px-3 py-2 items-center">
@@ -2945,75 +3158,66 @@ function App() {
                   </div>
                 </div>
 
-                {/* Right Column: Visual Tank Representation */}
+                {/* Right Column: Visual Eq Profile */}
                 <div className="flex flex-col items-center select-none border-t md:border-t-0 md:border-l border-slate-800/50 md:pl-6 relative">
                   <div className="h-[36px] flex items-center justify-center w-full">
                     <h4 className="font-semibold text-slate-300 text-xs">Equilibrium Temp Profile</h4>
                   </div>
-
+                  
                   <div className="relative flex items-center justify-center px-12 w-full">
-                    {/* Ticks on the right */}
                     <div 
-                      className="absolute left-[calc(50%+52px)] w-24 flex flex-col justify-between text-[9px] text-slate-500 font-mono select-none"
-                      style={{ height: `240px`, top: '2px' }}
+                      className="absolute left-[calc(50%+52px)] w-7 flex flex-col justify-between text-[9px] text-slate-500 font-mono select-none"
+                      style={{ height: `${totalTankHeight}px`, top: '2px' }}
                     >
                       <div className="h-0 flex items-center">
-                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
-                        <span className="font-semibold text-slate-400">100%</span>
-                        <span className="ml-1 text-amber-450">({dryRunResults.eqProfile[NUM_NODES - 1].toFixed(0)}°C)</span>
+                        <span className="w-1 h-[1px] bg-slate-800 mr-1" />
+                        100% <span className="ml-1 text-amber-450">({dryRunResults.eqProfile[NUM_NODES - 1].toFixed(0)}°C)</span>
                       </div>
-                      
                       <div className="h-0 flex items-center">
-                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
-                        <span className="font-semibold text-slate-400">75%</span>
-                        <span className="ml-1 text-orange-450">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.75)].toFixed(0)}°C)</span>
+                        <span className="w-1 h-[1px] bg-slate-800 mr-1" />
+                        75% <span className="ml-1 text-orange-450">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.75)].toFixed(0)}°C)</span>
                       </div>
-
                       <div className="h-0 flex items-center">
-                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
-                        <span className="font-semibold text-slate-400">50%</span>
-                        <span className="ml-1 text-yellow-500">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.50)].toFixed(0)}°C)</span>
+                        <span className="w-1 h-[1px] bg-slate-800 mr-1" />
+                        50% <span className="ml-1 text-yellow-500">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.50)].toFixed(0)}°C)</span>
                       </div>
-
                       <div className="h-0 flex items-center">
-                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
-                        <span className="font-semibold text-slate-400">25%</span>
-                        <span className="ml-1 text-sky-400">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.25)].toFixed(0)}°C)</span>
+                        <span className="w-1 h-[1px] bg-slate-800 mr-1" />
+                        25% <span className="ml-1 text-sky-400">({dryRunResults.eqProfile[Math.round((NUM_NODES - 1) * 0.25)].toFixed(0)}°C)</span>
                       </div>
-
                       <div className="h-0 flex items-center">
-                        <span className="w-1.5 h-[1px] bg-slate-800 mr-1" />
-                        <span className="font-semibold text-slate-400">0%</span>
-                        <span className="ml-1 text-blue-400">({dryRunResults.eqProfile[0].toFixed(0)}°C)</span>
+                        <span className="w-1 h-[1px] bg-slate-800 mr-1" />
+                        0% <span className="ml-1 text-blue-400">({dryRunResults.eqProfile[0].toFixed(0)}°C)</span>
                       </div>
                     </div>
 
-                    {/* The Tank Visual Cylinder */}
                     <div 
                       className="relative w-24 bg-slate-950 border-2 border-slate-700 rounded-t-3xl rounded-b-3xl overflow-hidden shadow-inner flex flex-col"
-                      style={{ height: `244px` }}
+                      style={{ height: `${totalTankHeight + 4}px` }}
                     >
-                      {eqSegments.map((seg, idx) => {
-                        const color = seg.coveringSources.length === 0 ? '#1e293b' : getTempColor(seg.eqTemp);
+                      {[...eqSegments].reverse().map((seg, idx) => {
+                        const originalIdx = eqSegments.indexOf(seg);
+                        const height = Math.max(38, (seg.yEnd - seg.yStart) * 240);
+                        
+                        let bgColor = 'bg-blue-500/20'; // cold
+                        if (seg.eqTemp >= maxActiveSourceTemp - 1) bgColor = 'bg-orange-500/80'; // hot
+                        else if (seg.eqTemp > T_baseline + 1) bgColor = 'bg-yellow-500/50'; // warm mixed
+                        
                         return (
-                          <div 
-                            key={idx}
-                            className="w-full flex items-center justify-center border-b border-black/20 last:border-b-0 relative"
-                            style={{ 
-                              height: `${(seg.yStart - seg.yEnd) * 100}%`,
-                              backgroundColor: color 
-                            }}
+                          <div
+                            key={originalIdx}
+                            className={`relative w-full ${bgColor} border-b border-slate-800/30 last:border-b-0 transition-colors duration-300`}
+                            style={{ height: `${height}px` }}
                           >
-                            <span className="text-[10px] font-bold text-white/50 absolute left-2 select-none">
-                              #{idx + 1}
-                            </span>
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-[10px] font-bold text-slate-100 select-none opacity-80">
+                              <span>#{originalIdx + 1}</span>
+                            </div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
-
-                  {/* Legend below the tank */}
+                  
                   <div className="mt-4 flex flex-col gap-1.5 w-full px-2 text-[10px] items-center md:items-start">
                     <div className="flex items-center gap-2">
                       <div className="w-3.5 h-3.5 rounded bg-orange-500 border border-orange-500/30 shadow-sm" />
@@ -3050,18 +3254,20 @@ function App() {
                     <h4 className="font-semibold text-slate-200 mb-1">3. Transient Settle Times</h4>
                     <div className="flex flex-col space-y-2 mt-2">
                       <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-emerald-500/20">
-                        <span className="text-emerald-450 font-medium">Startup:</span>
+                        <span className="text-slate-300 font-medium">Startup:</span>
                         <span className="font-mono text-emerald-400 font-bold text-sm">{formatTime(chargeFromDrainedTime)}</span>
                       </div>
                       <div className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-purple-500/20">
-                        <span className="text-purple-400 font-medium">Depletion:</span>
+                        <span className="text-slate-300 font-medium">Depletion:</span>
                         <span className="font-mono text-purple-400 font-bold text-sm">{formatTime(dischargeFromMaxTime)}</span>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-
+\n
+                </>
+              )}
             </div>
           </div>
         </div>

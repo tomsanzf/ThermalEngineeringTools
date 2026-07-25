@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useAnimation, useInView } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Linkedin, Mail } from 'lucide-react';
+import { ArrowRight, Linkedin, Mail, ArrowLeft } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const Reveal: React.FC<{ children: React.ReactNode; delay?: number; className?: string }> = ({ children, delay = 0, className }) => {
@@ -116,7 +116,14 @@ export default function Landing() {
   return (
     <div className="bg-[#0c0c0b] text-[#f0ede8] font-sans selection:bg-[#e8541a] selection:text-white">
       {/* NAV */}
-      <nav className="fixed top-0 left-0 right-0 z-[100] flex items-center gap-8 h-[60px] px-6 md:px-12 bg-[#0c0c0b]/85 backdrop-blur-xl border-b border-[#272521]">
+      <nav className="fixed top-0 left-0 right-0 z-[100] flex items-center gap-4 h-[60px] px-6 md:px-12 bg-[#0c0c0b]/85 backdrop-blur-xl border-b border-[#272521]">
+        <a 
+          href="../../index.html" 
+          className="w-9 h-9 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white rounded-lg transition duration-200 border border-neutral-800 flex items-center justify-center shrink-0 cursor-pointer"
+          title="Back to Portal"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </a>
         <a href="/" className="text-[17px] font-semibold tracking-tight text-[#f0ede8] no-underline">
           Sankey<span className="text-[#e8541a]">Loop</span>
         </a>

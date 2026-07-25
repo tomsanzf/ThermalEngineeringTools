@@ -433,11 +433,46 @@ export default function App() {
     <div style={{ background: "#070b14", color: "#e2e8f0", ...FF, fontSize: 12, minHeight: "100vh" }}>
 
       {/* ── Header ────────────────────────────────────────────────────── */}
-      <div style={{ background: "#09111e", borderBottom: "1px solid #1a3060", padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 9, color: "#38bdf8", letterSpacing: 3, textTransform: "uppercase" }}>Full System — with Hydraulic Physics</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>
-            Flow & Temperature → COP → PI Controllers → Soft-Start → Load Request → Sequencer → Dispatch Signal
+      <div style={{ background: "#09111e", borderBottom: "1px solid #1a3060", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <a 
+            href="../../index.html" 
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '36px',
+              height: '36px',
+              borderRadius: '8px',
+              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+              color: '#e2e8f0',
+              textDecoration: 'none',
+              border: '1px solid #1a3060',
+              transition: 'all 0.2s',
+              cursor: 'pointer',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              flexShrink: 0
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+              e.currentTarget.style.borderColor = '#38bdf8';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+              e.currentTarget.style.borderColor = '#1a3060';
+            }}
+            title="Back to Portal"
+          >
+            ←
+          </a>
+          <div>
+            <div style={{ fontFamily: 'monospace', fontSize: 10, fontWeight: 800, letterSpacing: '0.2em', color: '#38bdf8', textTransform: 'uppercase', marginBottom: 2 }}>
+              Armstrong International
+            </div>
+            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#f1f5f9", letterSpacing: "-0.02em" }}>
+              Heat Pump Visualizer
+            </h1>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>

@@ -182,3 +182,9 @@
     border-right-color: var(--border);
   }
 }
+
+
+/* Interactive SVG node cursor styles */
+.interactive-node {
+  cursor: pointer;
+}

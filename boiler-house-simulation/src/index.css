@@ -51,6 +51,9 @@ html, body, #root {
   width: 100vw;
   overflow: hidden;
   position: relative;
+  background-color: var(--bg);
+  color: var(--text);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Header Styles */
@@ -666,3 +669,116 @@ html, body, #root {
   padding: 0.2rem 0.4rem;
   font-size: 0.7rem;
 }
+
+/* Sidebar Three Columns Layout */
+.balance-row.three-cols {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+.balance-col-label {
+  flex: 1.2;
+  text-align: left;
+}
+.balance-col-mass {
+  width: 90px;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+.balance-col-energy {
+  width: 95px;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+/* Sidebar Inputs Styling */
+.sidebar input[type="number"] {
+  width: 100%;
+  background-color: rgba(3, 7, 18, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 0.2rem 0.4rem;
+  outline: none;
+  text-align: center;
+  transition: border-color 0.15s ease;
+  box-sizing: border-box;
+}
+.sidebar input[type="number"]:focus {
+  border-color: var(--gas);
+}
+.app-container.light-theme .sidebar input[type="number"] {
+  background-color: rgba(255, 255, 255, 0.8);
+  border-color: #d1d5db;
+  color: #111827;
+}
+
+/* Floating Collapsible Legend */
+.legend-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 8px;
+  z-index: 10;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+.app-container.light-theme .legend-overlay {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+.legend-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 6px;
+  outline: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.legend-toggle:hover {
+  color: var(--text);
+}
+.legend-content {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.app-container.light-theme .legend-content {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.7rem;
+  color: var(--text);
+}
+.legend-color {
+  width: 12px;
+  height: 4px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.legend-color.gas { background-color: #ff9900; }
+.legend-color.air { background-color: #e2e8f0; }
+.legend-color.steam { background-color: #ef4444; }
+.legend-color.water { background-color: #1d4ed8; }
+.legend-color.condensate { background-color: #06b6d4; }
+.legend-color.blowdown { background-color: #a78bfa; }
+.legend-color.flue { background-color: #64748b; }

@@ -4,7 +4,7 @@ import { MappingPhase } from './components/MappingPhase';
 import { SettingsPhase } from './components/SettingsPhase';
 import { PreviewAndRenderPhase } from './components/PreviewAndRenderPhase';
 import { AppState, DataRow, TagMapping } from './types';
-import { Activity, Download, Upload } from 'lucide-react';
+import { Activity, Download, Upload, ArrowLeft } from 'lucide-react';
 
 export default function App() {
   const [step, setStep] = useState(0); // 0: upload, 1: map, 2: settings, 3: render
@@ -106,13 +106,25 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="bg-blue-600 p-2 rounded-lg">
-              <Activity className="w-5 h-5 text-white" />
+      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 sticky top-0 z-50">
+        <div className="w-full flex items-center justify-between gap-4">
+          <div className="flex items-center space-x-4">
+            <a 
+              href="../../index.html" 
+              className="w-9 h-9 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700/50 flex items-center justify-center shrink-0 cursor-pointer"
+              title="Back to Portal"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </a>
+            <div>
+              <div className="flex flex-col">
+                <span className="font-mono text-[10px] font-extrabold tracking-[0.2em] text-blue-500 uppercase leading-none mb-1">
+                  Armstrong International
+                </span>
+                <h1 className="text-xl font-bold tracking-tight text-white leading-tight">PFD - Data Overlay</h1>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">Overlay timeseries simulation data onto Process Flow Diagrams</p>
             </div>
-            <h1 className="font-bold text-xl tracking-tight text-white hidden sm:block">PFD Overlay Studio</h1>
           </div>
           
           {/* Stepper */}
