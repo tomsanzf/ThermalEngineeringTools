@@ -57,6 +57,14 @@ const getMidpoint = (x1: number, y1: number, x2: number, y2: number, t: number =
 };
 
 // Formats simulated elapsed minutes into a human-readable string
+const formatHhMm = (minutes: number): string => {
+  const totalSec = Math.max(0, Math.round(minutes * 60));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${pad(h)}:${pad(m)}`;
+};
+
 const formatElapsedTime = (minutes: number): string => {
   const pad = (n: number) => n.toString().padStart(2, '0');
   
@@ -107,7 +115,7 @@ function App() {
     tankHeight: 2.0,
     ambientTemp: 20,
     heatLossCoef: 0.8, // W/m²K (highly insulated)
-    conductionCoef: 1.5, // W/K internal conduction
+    lambda: 0.6, // W/(m·K) thermal conductivity (pure water ≈ 0.6)
     numNodes: NUM_NODES,
     riMin: 100,
     riMax: 500,
@@ -115,6 +123,16 @@ function App() {
     buoyancyOverrideValue: 0.1
   });
   
+  const [gradientParams, setGradientParams] = useState({
+    mode: 'auto' as 'auto' | 'manual',
+    method: 'fullSpectrum' as 'fullSpectrum' | 'twoColor',
+    coldColor: '#3b82f6',
+    hotColor: '#ef4444',
+    coldTemp: 20,
+    hotTemp: 90
+  });
+  
+  const [chartSpanMinutes, setChartSpanMinutes] = useState<number>(60);
   const [simSpeed, setSimSpeed] = useState<number>(10); // 0 (paused), 1x, 10x, 100x, 500x
   const [flowDurationFactor, setFlowDurationFactor] = useState<number>(15.0);
   const [dragPortId, setDragPortId] = useState<string | null>(null);
@@ -166,13 +184,11 @@ function App() {
         'Top (100%)': Math.round(state.temperatures[topIdx] * 10) / 10,
       };
 
-      const nextHist = [...prev, newPoint];
-      if (nextHist.length > maxPoints) {
-        return nextHist.slice(nextHist.length - maxPoints);
-      }
-      return nextHist;
+      const oldestAllowed = Math.max(0, elapsedTime - chartSpanMinutes - 10);
+      const nextHist = prev.filter(p => p.time >= oldestAllowed);
+      return [...nextHist, newPoint];
     });
-  }, [elapsedTime, state.temperatures, NUM_NODES]);
+  }, [elapsedTime, state.temperatures, NUM_NODES, chartSpanMinutes]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -201,10 +217,11 @@ function App() {
   const getBoxHeight = (loopId: string, isExpanded: boolean) => {
     if (!isExpanded) return 85;
     const loop = state.loops.find(l => l.id === loopId);
-    if (loop && loop.type === 'source') {
-      return 280; // All sources need 280px for hysteresis section when expanded
-    }
-    return 205; // Expanded height for others to avoid overflow
+    const pType = loop?.profile?.type || 'constant';
+    let baseH = loop && loop.type === 'source' ? 275 : 210;
+    if (pType === 'sinusoidal') baseH += 65;
+    else if (pType === 'onOff') baseH += 45;
+    return baseH;
   };
 
   const getBoxPositions = () => {
@@ -255,18 +272,101 @@ function App() {
   const tankLeft = Math.round((canvasWidth - 150) / 2);
   const tankRight = tankLeft + 150;
 
+  const getPortYPos = useCallback((h: number) => {
+    if (h >= 0.99) return tankTop - 12; // Top T-joint
+    if (h <= 0.01) return tankTop + tankHeight + 12; // Bottom T-joint
+    return tankTop + tankHeight * (1 - h);
+  }, [tankTop, tankHeight]);
+
+  const getPortXPos = useCallback((h: number, isLeft: boolean) => {
+    if (h >= 0.99 || h <= 0.01) return tankLeft + 75; // Center T-joint fitting
+    return isLeft ? tankLeft : tankRight;
+  }, [tankLeft, tankRight]);
+
   const tankRef = useRef<HTMLDivElement>(null);
   const simRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(performance.now());
   const accumulatorRef = useRef<number>(0);
   
+  const hexToRgb = useCallback((hex: string) => {
+    const cleanHex = hex.replace('#', '');
+    const bigint = parseInt(cleanHex.length === 3 ? cleanHex.split('').map(c => c + c).join('') : cleanHex, 16);
+    return {
+      r: (bigint >> 16) & 255,
+      g: (bigint >> 8) & 255,
+      b: bigint & 255
+    };
+  }, []);
+
+  const hexToHsl = useCallback((hex: string) => {
+    const { r, g, b } = hexToRgb(hex);
+    const rNorm = r / 255;
+    const gNorm = g / 255;
+    const bNorm = b / 255;
+    const max = Math.max(rNorm, gNorm, bNorm);
+    const min = Math.min(rNorm, gNorm, bNorm);
+    let h = 0;
+    let s = 0;
+    const l = (max + min) / 2;
+
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case rNorm: h = (gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0); break;
+        case gNorm: h = (bNorm - rNorm) / d + 2; break;
+        case bNorm: h = (rNorm - gNorm) / d + 4; break;
+      }
+      h /= 6;
+    }
+
+    return {
+      h: Math.round(h * 360),
+      s: Math.round(s * 100),
+      l: Math.round(l * 100)
+    };
+  }, [hexToRgb]);
+
   // Color mapping function based on temperature
-  const getTempColor = (temp: number, minT: number = 10, maxT: number = 90) => {
+  const getTempColor = useCallback((temp: number, minT: number = 10, maxT: number = 90) => {
+    if (gradientParams.mode === 'manual') {
+      const cT = gradientParams.coldTemp;
+      const hT = gradientParams.hotTemp;
+      const range = Math.max(0.1, hT - cT);
+      const ratio = Math.min(1, Math.max(0, (temp - cT) / range));
+
+      if (gradientParams.method === 'fullSpectrum') {
+        const coldHsl = hexToHsl(gradientParams.coldColor || '#3b82f6');
+        const hotHsl = hexToHsl(gradientParams.hotColor || '#ef4444');
+
+        let h1 = coldHsl.h;
+        let h2 = hotHsl.h;
+
+        if (h2 > h1) {
+          h2 = h2 - 360;
+        }
+
+        let currentH = (h1 + ratio * (h2 - h1)) % 360;
+        if (currentH < 0) currentH += 360;
+
+        const currentS = Math.round(coldHsl.s + ratio * (hotHsl.s - coldHsl.s));
+        const currentL = Math.round(coldHsl.l + ratio * (hotHsl.l - coldHsl.l));
+
+        return `hsl(${Math.round(currentH)}, ${currentS}%, ${currentL}%)`;
+      } else {
+        const coldRgb = hexToRgb(gradientParams.coldColor || '#3b82f6');
+        const hotRgb = hexToRgb(gradientParams.hotColor || '#ef4444');
+        const r = Math.round(coldRgb.r + ratio * (hotRgb.r - coldRgb.r));
+        const g = Math.round(coldRgb.g + ratio * (hotRgb.g - coldRgb.g));
+        const b = Math.round(coldRgb.b + ratio * (hotRgb.b - coldRgb.b));
+        return `rgb(${r}, ${g}, ${b})`;
+      }
+    }
     const range = Math.max(1, maxT - minT);
     const percentage = Math.min(100, Math.max(0, ((temp - minT) / range) * 100));
     const hue = 240 - (percentage / 100) * 240;
     return `hsl(${hue}, 85%, 45%)`;
-  };
+  }, [gradientParams, hexToRgb, hexToHsl]);
 
   // Run simulation step
   const tick = useCallback((steps: number) => {
@@ -275,13 +375,15 @@ function App() {
       let currentLoops = [...prev.loops];
       const dt = 1.0;
       
+      let currentElapsedTime = elapsedTime;
       for (let i = 0; i < steps; i++) {
-        const result = simulateStep({ ...prev, temperatures: currentT, loops: currentLoops }, params, dt);
+        const result = simulateStep({ ...prev, temperatures: currentT, loops: currentLoops }, params, dt, currentElapsedTime);
         currentT = result.temperatures;
         currentLoops = result.loops;
+        currentElapsedTime += dt / 60;
       }
       
-      setElapsedTime(t => t + (dt * steps) / 60);
+      setElapsedTime(currentElapsedTime);
 
       return {
         ...prev,
@@ -289,7 +391,7 @@ function App() {
         loops: currentLoops
       };
     });
-  }, [params]);
+  }, [params, elapsedTime]);
 
   // RequestAnimationFrame Loop
   useEffect(() => {
@@ -459,8 +561,15 @@ function App() {
     let height = 1 - (y / tankHeight);
     height = Math.min(1, Math.max(0, height));
     
-    const nodeIdx = Math.min(NUM_NODES - 1, Math.max(0, Math.floor(height * NUM_NODES)));
-    const snappedHeight = (nodeIdx + 0.5) / NUM_NODES;
+    let snappedHeight: number;
+    if (height >= 0.96) {
+      snappedHeight = 1.0; // Top T-joint
+    } else if (height <= 0.04) {
+      snappedHeight = 0.0; // Bottom T-joint
+    } else {
+      const nodeIdx = Math.min(NUM_NODES - 1, Math.max(0, Math.floor(height * NUM_NODES)));
+      snappedHeight = (nodeIdx + 0.5) / NUM_NODES;
+    }
 
     setState(prev => ({
       ...prev,
@@ -631,12 +740,33 @@ function App() {
   // Modify loop parameters
   const updateLoopParam = (
     loopId: string, 
-    field: 'designPower' | 'designTempSupply' | 'designTempReturn' | 'name' | 'limitedByPower' | 'sinkControlMode' | 'sourceControlMode' | 'turndownability' | 'triggerOn' | 'sensorLocation', 
+    field: 'designPower' | 'designTempSupply' | 'designTempReturn' | 'name' | 'limitedByPower' | 'sinkControlMode' | 'sourceControlMode' | 'turndownability' | 'triggerOn' | 'sensorLocation' | 'profile', 
     value: any
   ) => {
     setState(prev => ({
       ...prev,
       loops: prev.loops.map(l => l.id === loopId ? { ...l, [field]: value } : l)
+    }));
+  };
+
+  const updateLoopProfileParam = (
+    loopId: string,
+    profileField: keyof LoopProfile,
+    value: any
+  ) => {
+    setState(prev => ({
+      ...prev,
+      loops: prev.loops.map(l => {
+        if (l.id !== loopId) return l;
+        const currentProfile = l.profile || { type: 'constant' };
+        return {
+          ...l,
+          profile: {
+            ...currentProfile,
+            [profileField]: value
+          }
+        };
+      })
     }));
   };
 
@@ -686,7 +816,7 @@ function App() {
   let maxFlow_m3s_disp = 0;
   state.loops.forEach(loop => {
     if (!loop.isActive) return;
-    const actuals = getLoopActuals(loop, state.temperatures, state.ports);
+    const actuals = getLoopActuals(loop, state.temperatures, state.ports, elapsedTime);
     const flow_m3s = actuals.flowRate / 3600;
     if (flow_m3s > maxFlow_m3s_disp) {
       maxFlow_m3s_disp = flow_m3s;
@@ -910,7 +1040,7 @@ function App() {
         }
         const allOff = currentLoops.every(l => {
           if (!l.isActive || l.isShutDown) return true;
-          return getLoopActuals(l, currentT, state.ports).actualPower < 0.1;
+          return getLoopActuals(l, currentT, state.ports, elapsed / 60).actualPower < 0.1;
         });
         if (allOff) {
           chargeTime = elapsed / 3600;
@@ -945,7 +1075,7 @@ function App() {
         }
         const allOff = currentLoops.every(l => {
           if (!l.isActive || l.isShutDown) return true;
-          return getLoopActuals(l, currentT, state.ports).actualPower < 0.1;
+          return getLoopActuals(l, currentT, state.ports, elapsed / 60).actualPower < 0.1;
         });
         if (allOff) {
           dischargeTime = elapsed / 3600;
@@ -1169,8 +1299,8 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
     return `${h} h ${m} min`;
   };
 
-  const minTime = tempHistory.length > 0 ? tempHistory[0].time : 0;
-  const maxTime = tempHistory.length > 0 ? Math.max(minTime + 0.1, tempHistory[tempHistory.length - 1].time) : 1;
+  const minTime = Math.max(0, elapsedTime > chartSpanMinutes ? elapsedTime - chartSpanMinutes : 0);
+  const maxTime = Math.max(chartSpanMinutes, elapsedTime > chartSpanMinutes ? elapsedTime : chartSpanMinutes);
 
   const cycleData = dryRunResults.systemCycles ? [
     { 
@@ -1416,16 +1546,16 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
 
                 <div>
                   <div className="flex justify-between text-slate-400 mb-1 text-xs">
-                    <span>Internal Conduction / Mixing</span>
-                    <span className="font-mono text-slate-200">{params.conductionCoef} W/K</span>
+                    <span>Internal Conductivity λ</span>
+                    <span className="font-mono text-slate-200">{params.lambda.toFixed(1)} W/(m·K)</span>
                   </div>
                   <input 
                     type="range" 
                     min="0.1" 
-                    max="10.0" 
+                    max="5.0" 
                     step="0.1"
-                    value={params.conductionCoef} 
-                    onChange={(e) => setParams(prev => ({ ...prev, conductionCoef: Number(e.target.value) }))}
+                    value={params.lambda} 
+                    onChange={(e) => setParams(prev => ({ ...prev, lambda: Number(e.target.value) }))}
                     className="w-full h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-white"
                   />
                 </div>
@@ -1456,6 +1586,101 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                     onChange={(e) => setFlowDurationFactor(Number(e.target.value))}
                     className="w-16 bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700 hover:border-slate-800"
                   />
+                </div>
+
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Chart History Span</span>
+                  <div className="relative">
+                    <input 
+                      type="number" 
+                      step="5"
+                      min="5"
+                      max="1440"
+                      value={chartSpanMinutes} 
+                      onChange={(e) => setChartSpanMinutes(Math.max(5, Number(e.target.value)))}
+                      className="w-16 bg-slate-950 border border-slate-850 rounded pl-1.5 pr-6 py-0.5 text-right font-mono text-xs text-white focus:outline-none focus:border-slate-700 hover:border-slate-800"
+                    />
+                    <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[9px] pointer-events-none">min</span>
+                  </div>
+                </div>
+
+                {/* Thermal Gradient Sub-menu */}
+                <div className="border-t border-slate-800/80 pt-3">
+                  <div className="flex items-center justify-between text-xs mb-2">
+                    <span className="text-slate-300 font-semibold">Thermal Gradient</span>
+                    <div className="flex bg-slate-950 border border-slate-850 rounded p-0.5 text-[10px]">
+                      <button
+                        onClick={() => setGradientParams(prev => ({ ...prev, mode: 'auto' }))}
+                        className={`px-2 py-0.5 rounded transition cursor-pointer ${gradientParams.mode === 'auto' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'}`}
+                      >
+                        Auto
+                      </button>
+                      <button
+                        onClick={() => setGradientParams(prev => ({ ...prev, mode: 'manual' }))}
+                        className={`px-2 py-0.5 rounded transition cursor-pointer ${gradientParams.mode === 'manual' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'}`}
+                      >
+                        Manual
+                      </button>
+                    </div>
+                  </div>
+
+                  {gradientParams.mode === 'manual' && (
+                    <div className="space-y-2 mt-2 bg-slate-950/60 p-2 rounded border border-slate-850">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">Cold Color</span>
+                          <input 
+                            type="color"
+                            value={gradientParams.coldColor}
+                            onChange={(e) => setGradientParams(prev => ({ ...prev, coldColor: e.target.value }))}
+                            className="w-full h-6 bg-slate-900 border border-slate-800 rounded cursor-pointer p-0.5"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">Hot Color</span>
+                          <input 
+                            type="color"
+                            value={gradientParams.hotColor}
+                            onChange={(e) => setGradientParams(prev => ({ ...prev, hotColor: e.target.value }))}
+                            className="w-full h-6 bg-slate-900 border border-slate-800 rounded cursor-pointer p-0.5"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-slate-400 block mb-1">Interpolation Method</span>
+                        <select
+                          value={gradientParams.method || 'fullSpectrum'}
+                          onChange={(e) => setGradientParams(prev => ({ ...prev, method: e.target.value as 'twoColor' | 'fullSpectrum' }))}
+                          className="w-full bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-none focus:border-slate-700 font-mono h-[22px]"
+                        >
+                          <option value="fullSpectrum">Full Spectrum (Rainbow)</option>
+                          <option value="twoColor">Two-Color Blend (Direct)</option>
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">Cold Temp (°C)</span>
+                          <input 
+                            type="number"
+                            value={gradientParams.coldTemp}
+                            onChange={(e) => setGradientParams(prev => ({ ...prev, coldTemp: Number(e.target.value) }))}
+                            className="w-full bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 font-mono text-xs text-white text-right focus:outline-none focus:border-slate-700"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">Hot Temp (°C)</span>
+                          <input 
+                            type="number"
+                            value={gradientParams.hotTemp}
+                            onChange={(e) => setGradientParams(prev => ({ ...prev, hotTemp: Number(e.target.value) }))}
+                            className="w-full bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 font-mono text-xs text-white text-right focus:outline-none focus:border-slate-700"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between text-xs border-t border-slate-800/80 pt-3">
@@ -1606,8 +1831,10 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                       const box = boxPositions[loop.id];
                       const isSource = loop.type === 'source';
 
-                      const supplyPortY = tankTop + tankHeight * (1 - supplyPort.height);
-                      const returnPortY = tankTop + tankHeight * (1 - returnPort.height);
+                      const supplyPortY = getPortYPos(supplyPort.height);
+                      const returnPortY = getPortYPos(returnPort.height);
+                      const supplyPortX = getPortXPos(supplyPort.height, isSource);
+                      const returnPortX = getPortXPos(returnPort.height, isSource);
 
                       let supplyPath = "";
                       let returnPath = "";
@@ -1616,21 +1843,21 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                       if (isSource) {
                         const x1_s = box.x + 280;
                         const y1_s = box.y + 25;
-                        const x2_s = tankLeft;
+                        const x2_s = supplyPortX;
                         const y2_s = supplyPortY;
 
                         supplyPath = `M ${x1_s} ${y1_s} L ${x1_s + 20} ${y1_s} C ${x1_s + 20 + dx} ${y1_s}, ${x2_s - 20 - dx} ${y2_s}, ${x2_s - 20} ${y2_s} L ${x2_s} ${y2_s}`;
 
                         const isExpanded = expandedBoxes[loop.id];
                         const boxH = getBoxHeight(loop.id, isExpanded);
-                        const x1_r = tankLeft;
+                        const x1_r = returnPortX;
                         const y1_r = returnPortY;
                         const x2_r = box.x + 280;
                         const y2_r = box.y + boxH - 25;
 
                         returnPath = `M ${x1_r} ${y1_r} L ${x1_r - 20} ${y1_r} C ${x1_r - 20 - dx} ${y1_r}, ${x2_r + 20 + dx} ${y2_r}, ${x2_r + 20} ${y2_r} L ${x2_r} ${y2_r}`;
                       } else {
-                        const x1_d = tankRight;
+                        const x1_d = returnPortX;
                         const y1_d = returnPortY;
                         const x2_d = box.x;
                         const y2_d = box.y + 25;
@@ -1641,13 +1868,13 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                         const boxH = getBoxHeight(loop.id, isExpanded);
                         const x1_r = box.x;
                         const y1_r = box.y + boxH - 25;
-                        const x2_r = tankRight;
+                        const x2_r = supplyPortX;
                         const y2_r = supplyPortY;
 
                         returnPath = `M ${x1_r} ${y1_r} L ${x1_r - 20} ${y1_r} C ${x1_r - 20 - dx} ${y1_r}, ${x2_r + 20 + dx} ${y2_r}, ${x2_r + 20} ${y2_r} L ${x2_r} ${y2_r}`;
                       }
 
-                      const actuals = getLoopActuals(loop, state.temperatures, state.ports);
+                      const actuals = getLoopActuals(loop, state.temperatures, state.ports, elapsedTime);
                       const animDuration = actuals.flowRate > 0 ? (flowDurationFactor / actuals.flowRate) : 0;
 
                       return (
@@ -1703,16 +1930,18 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                       const isSource = loop.type === 'source';
                       const boxH = getBoxHeight(loop.id, isExpanded);
 
-                      const supplyPortY = tankTop + tankHeight * (1 - supplyPort.height);
-                      const returnPortY = tankTop + tankHeight * (1 - returnPort.height);
+                      const supplyPortY = getPortYPos(supplyPort.height);
+                      const returnPortY = getPortYPos(returnPort.height);
+                      const supplyPortX = getPortXPos(supplyPort.height, isSource);
+                      const returnPortX = getPortXPos(returnPort.height, isSource);
 
-                      const actuals = getLoopActuals(loop, state.temperatures, state.ports);
+                      const actuals = getLoopActuals(loop, state.temperatures, state.ports, elapsedTime);
 
                       if (isSource) {
                         // Supply badge (top badge)
                         const x1_s = box.x + 280;
                         const y1_s = box.y + 25;
-                        const x2_s = tankLeft;
+                        const x2_s = supplyPortX;
                         const y2_s = supplyPortY;
                         const supplyMid = getMidpoint(x1_s, y1_s, x2_s, y2_s, 0.5);
 
@@ -1736,7 +1965,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                         });
 
                         // Return badge (bottom badge)
-                        const x1_r = tankLeft;
+                        const x1_r = returnPortX;
                         const y1_r = returnPortY;
                         const x2_r = box.x + 280;
                         const y2_r = box.y + boxH - 25;
@@ -1762,7 +1991,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                         });
                       } else {
                         // Supply badge (top badge)
-                        const x1_d = tankRight;
+                        const x1_d = returnPortX;
                         const y1_d = returnPortY;
                         const x2_d = box.x;
                         const y2_d = box.y + 25;
@@ -1790,7 +2019,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                         // Return badge (bottom badge)
                         const x1_r = box.x;
                         const y1_r = box.y + boxH - 25;
-                        const x2_r = tankRight;
+                        const x2_r = supplyPortX;
                         const y2_r = supplyPortY;
                         const returnMid = getMidpoint(x1_r, y1_r, x2_r, y2_r, 0.5);
 
@@ -1902,6 +2131,26 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                     </span>
                   </div>
 
+                  {/* Top T-Pipe Fitting */}
+                  <div 
+                    style={{ left: `${tankLeft + 55}px`, top: `${tankTop - 18}px`, width: '40px', height: '18px' }}
+                    className="absolute border-2 border-b-0 border-slate-700 bg-slate-900 rounded-t flex flex-col items-center justify-between z-10 p-0.5 select-none"
+                    title="Top T-Joint Pipe Connection"
+                  >
+                    <span className="text-[7px] font-mono text-slate-400 font-bold tracking-tighter uppercase">Top T</span>
+                    <div className="w-full h-1 bg-slate-700 rounded-full" />
+                  </div>
+
+                  {/* Bottom T-Pipe Fitting */}
+                  <div 
+                    style={{ left: `${tankLeft + 55}px`, top: `${tankTop + tankHeight}px`, width: '40px', height: '18px' }}
+                    className="absolute border-2 border-t-0 border-slate-700 bg-slate-900 rounded-b flex flex-col items-center justify-between z-10 p-0.5 select-none"
+                    title="Bottom T-Joint Pipe Connection"
+                  >
+                    <div className="w-full h-1 bg-slate-700 rounded-full" />
+                    <span className="text-[7px] font-mono text-slate-400 font-bold tracking-tighter uppercase">Bot T</span>
+                  </div>
+
                   <div 
                     ref={tankRef}
                     style={{ left: `${tankLeft}px`, top: `${tankTop}px`, width: '150px', height: `${tankHeight}px` }}
@@ -1949,7 +2198,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
 
                         state.loops.forEach(loop => {
                           if (!loop.isActive) return;
-                          const actuals = getLoopActuals(loop, state.temperatures, state.ports);
+                          const actuals = getLoopActuals(loop, state.temperatures, state.ports, elapsedTime);
                           if (actuals.flowRate <= tol) return;
 
                           const supplyPort = state.ports.find(p => p.id === loop.ports.supply);
@@ -1958,11 +2207,20 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                           if (supplyPort && returnPort) {
                             const isLeft = loop.type === 'source';
                             
+                            const getInternalNodePos = (h: number, isL: boolean) => {
+                              if (h >= 0.99) return { x: 75, y: 0 };
+                              if (h <= 0.01) return { x: 75, y: tankHeight };
+                              return { x: isL ? 0 : 150, y: (1 - h) * tankHeight };
+                            };
+
+                            const supplyPos = getInternalNodePos(supplyPort.height, isLeft);
+                            const returnPos = getInternalNodePos(returnPort.height, isLeft);
+
                             activeInlets.push({
                               id: supplyPort.id,
                               loopId: loop.id,
-                              x: isLeft ? 0 : 150,
-                              y: (1 - supplyPort.height) * tankHeight,
+                              x: supplyPos.x,
+                              y: supplyPos.y,
                               height: supplyPort.height,
                               flow: actuals.flowRate,
                               color: supplyPort.color
@@ -1971,8 +2229,8 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                             activeOutlets.push({
                               id: returnPort.id,
                               loopId: loop.id,
-                              x: isLeft ? 0 : 150,
-                              y: (1 - returnPort.height) * tankHeight,
+                              x: returnPos.x,
+                              y: returnPos.y,
                               height: returnPort.height,
                               flow: actuals.flowRate,
                               color: returnPort.color
@@ -1998,11 +2256,9 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                           if (matchedFlow > tol) {
                             let pathD = "";
                             const isCross = inlet.x !== outlet.x;
-                            if (!isCross) {
-                              pathD = `M ${inlet.x} ${inlet.y} C 75 ${inlet.y}, 75 ${outlet.y}, ${outlet.x} ${outlet.y}`;
-                            } else {
-                              pathD = `M ${inlet.x} ${inlet.y} L ${outlet.x} ${outlet.y}`;
-                            }
+                            const control1X = inlet.x === 75 ? 75 : (inlet.x === 0 ? 40 : 110);
+                            const control2X = outlet.x === 75 ? 75 : (outlet.x === 0 ? 40 : 110);
+                            pathD = `M ${inlet.x} ${inlet.y} C ${control1X} ${inlet.y}, ${control2X} ${outlet.y}, ${outlet.x} ${outlet.y}`;
 
                             paths.push({
                               d: pathD,
@@ -2132,8 +2388,10 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                   {state.ports.map((port) => {
                     const loop = state.loops.find(l => l.id === port.loopId);
                     const isLeft = loop ? loop.type === 'source' : true;
-                    const xPos = isLeft ? tankLeft : tankRight;
-                    const yPos = tankTop + tankHeight * (1 - port.height);
+                    const isTopT = port.height >= 0.99;
+                    const isBotT = port.height <= 0.01;
+                    const xPos = (isTopT || isBotT) ? tankLeft + 75 : (isLeft ? tankLeft : tankRight);
+                    const yPos = isTopT ? tankTop - 12 : (isBotT ? tankTop + tankHeight + 12 : tankTop + tankHeight * (1 - port.height));
                     
                     return (
                       <div 
@@ -2145,11 +2403,11 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                         }}
                         onMouseDown={() => handlePortMouseDown(port.id)}
                         className="absolute w-5 h-5 rounded-full cursor-ns-resize border-2 border-white bg-slate-950 shadow-md transition transform hover:scale-125 hover:bg-slate-900 active:scale-95 z-20 flex items-center justify-center group"
-                        title="Drag Up/Down to adjust connection point"
+                        title="Drag Up/Down to adjust connection point (Drag to top or bottom for T-Joint)"
                       >
                         <div style={{ backgroundColor: port.color }} className="w-2.5 h-2.5 rounded-full" />
                         <span className="absolute hidden group-hover:block bottom-6 bg-slate-950 text-white text-[9px] px-1.5 py-0.5 rounded border border-slate-800 whitespace-nowrap z-30 pointer-events-none">
-                          {port.name.split(' (')[0]} ({Math.round(port.height * 100)}%)
+                          {port.name.split(' (')[0]} ({isTopT ? 'Top T-Joint' : (isBotT ? 'Bottom T-Joint' : `${Math.round(port.height * 100)}%`)})
                         </span>
                       </div>
                     );
@@ -2159,7 +2417,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                     const box = boxPositions[loop.id];
                     if (!box) return null;
                     const isExpanded = expandedBoxes[loop.id];
-                    const actuals = getLoopActuals(loop, state.temperatures, state.ports);
+                    const actuals = getLoopActuals(loop, state.temperatures, state.ports, elapsedTime);
                     const isSource = loop.type === 'source';
                     const boxH = getBoxHeight(loop.id, isExpanded);
 
@@ -2239,7 +2497,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
 
                         <div className="flex-1 p-3 flex flex-col justify-between text-xs min-h-0">
                           {isExpanded ? (
-                            <div className="space-y-2 flex-1 overflow-hidden mb-2 pr-0.5" onClick={(e) => e.stopPropagation()}>
+                            <div className="space-y-2 flex-1 overflow-y-auto mb-2 pr-0.5" onClick={(e) => e.stopPropagation()}>
                               
                               {isSource ? (
                                 <>
@@ -2354,6 +2612,98 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                                   </div>
                                 </>
                               )}
+
+                              {/* Profile Selection (Demand for sinks / Availability for sources) */}
+                              <div className="border-t border-slate-800/80 pt-2 mt-1">
+                                <div className="flex justify-between items-center mb-1.5">
+                                  <span className="text-slate-400 text-[10px] font-medium">
+                                    {isSource ? 'Availability Profile' : 'Demand Profile'}
+                                  </span>
+                                  <select
+                                    value={loop.profile?.type || 'constant'}
+                                    onChange={(e) => updateLoopProfileParam(loop.id, 'type', e.target.value as ProfileType)}
+                                    className="bg-slate-950 border border-slate-850 rounded px-1.5 py-0.5 font-mono text-[10px] text-white focus:outline-none focus:border-slate-700 h-[22px]"
+                                  >
+                                    <option value="constant">Constant</option>
+                                    <option value="sinusoidal">Sinusoidal</option>
+                                    <option value="onOff">ON/OFF</option>
+                                  </select>
+                                </div>
+
+                                {loop.profile?.type === 'sinusoidal' && (
+                                  <div className="space-y-1.5 bg-slate-950/60 p-1.5 rounded border border-slate-850/80 mt-1">
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                      <div>
+                                        <span className="text-slate-400 text-[9px] block mb-0.5">Average</span>
+                                        <div className="relative">
+                                          <input
+                                            type="number"
+                                            value={loop.profile.average ?? loop.designPower}
+                                            onChange={(e) => updateLoopProfileParam(loop.id, 'average', Number(e.target.value))}
+                                            className="w-full bg-slate-950 border border-slate-850 rounded pl-1 pr-4 py-0.5 text-right font-mono text-[10px] text-white focus:outline-none focus:border-slate-700"
+                                          />
+                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[8px] pointer-events-none">kW</span>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-400 text-[9px] block mb-0.5">Amplitude</span>
+                                        <div className="relative">
+                                          <input
+                                            type="number"
+                                            value={loop.profile.amplitude ?? (loop.designPower * 0.5)}
+                                            onChange={(e) => updateLoopProfileParam(loop.id, 'amplitude', Number(e.target.value))}
+                                            className="w-full bg-slate-950 border border-slate-850 rounded pl-1 pr-4 py-0.5 text-right font-mono text-[10px] text-white focus:outline-none focus:border-slate-700"
+                                          />
+                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[8px] pointer-events-none">kW</span>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-400 text-[9px] block mb-0.5">Period</span>
+                                        <div className="relative">
+                                          <input
+                                            type="number"
+                                            value={loop.profile.period ?? 60}
+                                            onChange={(e) => updateLoopProfileParam(loop.id, 'period', Number(e.target.value))}
+                                            className="w-full bg-slate-950 border border-slate-850 rounded pl-1 pr-4 py-0.5 text-right font-mono text-[10px] text-white focus:outline-none focus:border-slate-700"
+                                          />
+                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[8px] pointer-events-none">min</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {loop.profile?.type === 'onOff' && (
+                                  <div className="space-y-1.5 bg-slate-950/60 p-1.5 rounded border border-slate-850/80 mt-1">
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <div>
+                                        <span className="text-slate-400 text-[9px] block mb-0.5">ON Duration</span>
+                                        <div className="relative">
+                                          <input
+                                            type="number"
+                                            value={loop.profile.onDuration ?? 30}
+                                            onChange={(e) => updateLoopProfileParam(loop.id, 'onDuration', Number(e.target.value))}
+                                            className="w-full bg-slate-950 border border-slate-850 rounded pl-1 pr-4 py-0.5 text-right font-mono text-[10px] text-white focus:outline-none focus:border-slate-700"
+                                          />
+                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[8px] pointer-events-none">min</span>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-400 text-[9px] block mb-0.5">OFF Duration</span>
+                                        <div className="relative">
+                                          <input
+                                            type="number"
+                                            value={loop.profile.offDuration ?? 30}
+                                            onChange={(e) => updateLoopProfileParam(loop.id, 'offDuration', Number(e.target.value))}
+                                            className="w-full bg-slate-950 border border-slate-850 rounded pl-1 pr-4 py-0.5 text-right font-mono text-[10px] text-white focus:outline-none focus:border-slate-700"
+                                          />
+                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-[8px] pointer-events-none">min</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
 
                               {loop.type === 'source' && (
                                 <div className="border-t border-slate-800/80 pt-2.5 mt-1">
@@ -2550,7 +2900,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                         dataKey="time"
                         type="number"
                         domain={[minTime, maxTime]}
-                        tickFormatter={(v) => `${v.toFixed(1)}m`}
+                        tickFormatter={(v) => formatHhMm(v)}
                         tick={{ fill: '#64748b', fontSize: 10 }}
                         stroke="#334155"
                       />
@@ -2565,7 +2915,7 @@ const activeSinksCount = state.loops.filter(l => l.isActive && l.type === 'sink'
                       <Tooltip
                         contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '8px' }}
                         labelStyle={{ color: '#38bdf8', fontSize: 11 }}
-                        labelFormatter={(v) => `Time: ${Number(v).toFixed(2)} min`}
+                        labelFormatter={(v) => `Time: ${formatHhMm(Number(v))}`}
                         itemStyle={{ fontSize: 12 }}
                         itemSorter={(item) => {
                           const key = item.dataKey || item.name || '';

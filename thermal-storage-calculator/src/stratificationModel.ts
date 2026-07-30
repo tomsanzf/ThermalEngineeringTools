@@ -7,6 +7,17 @@ export interface ConnectionPort {
   color: string;
 }
 
+export type ProfileType = 'constant' | 'sinusoidal' | 'onOff';
+
+export interface LoopProfile {
+  type: ProfileType;
+  period?: number;      // min (for sinusoidal)
+  average?: number;     // kW (for sinusoidal)
+  amplitude?: number;   // kW (for sinusoidal)
+  onDuration?: number;  // min (for ON/OFF)
+  offDuration?: number; // min (for ON/OFF)
+}
+
 export interface FluidLoop {
   id: string;
   name: string;
@@ -27,6 +38,7 @@ export interface FluidLoop {
   triggerOn?: number; // 0 to turndownability (%)
   sensorLocation?: number; // 0 to 100 (%) of height between return and supply
   isShutDown?: boolean; // Hysteresis state
+  profile?: LoopProfile;
 }
 
 export interface SimulationParams {
@@ -34,7 +46,7 @@ export interface SimulationParams {
   tankHeight: number; // Meters
   ambientTemp: number; // °C
   heatLossCoef: number; // W/m²K
-  conductionCoef: number; // W/K (internal conduction/mixing parameter)
+  lambda: number; // W/(m·K) thermal conductivity of fluid (pure water ≈ 0.6)
   numNodes: number;
   riMin: number; // Short-circuit Ri limit (default 100)
   riMax: number; // Stratified Ri limit (default 500)
@@ -140,10 +152,33 @@ export interface LoopActuals {
   actualPower: number;   // kW
 }
 
+export const getEffectiveDesignPower = (loop: FluidLoop, timeMinutes: number = 0): number => {
+  if (!loop.profile || loop.profile.type === 'constant') {
+    return loop.designPower;
+  }
+  if (loop.profile.type === 'sinusoidal') {
+    const period = loop.profile.period && loop.profile.period > 0 ? loop.profile.period : 60;
+    const avg = loop.profile.average ?? loop.designPower;
+    const amp = loop.profile.amplitude ?? (loop.designPower * 0.5);
+    const val = avg + amp * Math.sin((2 * Math.PI * timeMinutes) / period);
+    return Math.max(0, val);
+  }
+  if (loop.profile.type === 'onOff') {
+    const onDur = loop.profile.onDuration ?? 30;
+    const offDur = loop.profile.offDuration ?? 30;
+    const cycle = onDur + offDur;
+    if (cycle <= 0) return loop.designPower;
+    const modTime = timeMinutes % cycle;
+    return modTime < onDur ? loop.designPower : 0;
+  }
+  return loop.designPower;
+};
+
 export const getLoopActuals = (
   loop: FluidLoop,
   temperatures: number[],
-  ports: ConnectionPort[]
+  ports: ConnectionPort[],
+  timeMinutes: number = 0
 ): LoopActuals => {
   const supplyPort = ports.find(p => p.id === loop.ports.supply);
   const returnPort = ports.find(p => p.id === loop.ports.return);
@@ -164,8 +199,18 @@ export const getLoopActuals = (
     };
   }
 
+  const effectivePower = getEffectiveDesignPower(loop, timeMinutes);
+  if (effectivePower <= 0) {
+    return {
+      flowRate: 0,
+      tempIn: T_draw,
+      tempOut: T_draw,
+      actualPower: 0
+    };
+  }
+
   const designDeltaT = Math.abs(loop.designTempSupply - loop.designTempReturn);
-  const flowRate = designDeltaT > 0 ? (loop.designPower / (1.161111 * designDeltaT)) : 0;
+  const flowRate = designDeltaT > 0 ? (effectivePower / (1.161111 * designDeltaT)) : 0;
 
   let tempIn = T_draw;
   let actualPower = 0;
@@ -185,9 +230,9 @@ export const getLoopActuals = (
 
     if (mode === 'controlledFlow') {
       const potentialPower = flowRate * 1.161111 * potentialDeltaT;
-      if (potentialPower > loop.designPower && potentialDeltaT > 0) {
-        actualFlowRate = loop.designPower / (1.161111 * potentialDeltaT);
-        actualPower = loop.designPower;
+      if (potentialPower > effectivePower && potentialDeltaT > 0) {
+        actualFlowRate = effectivePower / (1.161111 * potentialDeltaT);
+        actualPower = effectivePower;
       } else {
         actualFlowRate = flowRate;
         actualPower = potentialPower;
@@ -217,9 +262,9 @@ export const getLoopActuals = (
     
     if (mode === 'controlledFlow') {
       const potentialPower = flowRate * 1.161111 * potentialDeltaT;
-      if (potentialPower > loop.designPower && potentialDeltaT > 0) {
-        actualFlowRate = loop.designPower / (1.161111 * potentialDeltaT);
-        actualPower = loop.designPower;
+      if (potentialPower > effectivePower && potentialDeltaT > 0) {
+        actualFlowRate = effectivePower / (1.161111 * potentialDeltaT);
+        actualPower = effectivePower;
       } else {
         actualFlowRate = flowRate;
         actualPower = potentialPower;
@@ -227,7 +272,7 @@ export const getLoopActuals = (
       tempIn = T_draw - potentialDeltaT;
     } else if (mode === 'returnTempLimited') {
       if (potentialDeltaT > 0) {
-        tempIn = Math.max(loop.designTempReturn, T_draw - loop.designPower / (flowRate * 1.161111));
+        tempIn = Math.max(loop.designTempReturn, T_draw - effectivePower / (flowRate * 1.161111));
         actualPower = flowRate * 1.161111 * (T_draw - tempIn);
       } else {
         tempIn = T_draw;
@@ -258,7 +303,8 @@ export interface SimulationResult {
 export const simulateStep = (
   state: TankState,
   params: SimulationParams,
-  dt: number // in seconds
+  dt: number, // in seconds
+  timeMinutes: number = 0
 ): SimulationResult => {
   const N = params.numNodes;
   const T = [...state.temperatures];
@@ -319,7 +365,7 @@ export const simulateStep = (
   let maxFlow_m3s = 0;
   nextLoops.forEach(loop => {
     if (!loop.isActive || loop.isShutDown) return;
-    const actuals = getLoopActuals(loop, T, state.ports);
+    const actuals = getLoopActuals(loop, T, state.ports, timeMinutes);
     const flow_m3s = actuals.flowRate / 3600;
     if (flow_m3s > maxFlow_m3s) {
       maxFlow_m3s = flow_m3s;
@@ -362,7 +408,7 @@ export const simulateStep = (
   nextLoops.forEach(loop => {
     if (!loop.isActive || loop.isShutDown) return;
     
-    const actuals = getLoopActuals(loop, T, state.ports);
+    const actuals = getLoopActuals(loop, T, state.ports, timeMinutes);
     if (actuals.flowRate <= 0) return;
 
     const flow_m3s = actuals.flowRate / 3600; // m³/h to m³/s
@@ -410,6 +456,19 @@ export const simulateStep = (
     }
   });
 
+  // 1b. Direct T-Joint / Node Flow Bypass:
+  // If supply (inlet) and return (outlet) ports exist at the same node/T-joint,
+  // the overlapping flow bypasses direct node mixing:
+  for (let i = 0; i < N; i++) {
+    const bypass = Math.min(q_inj[i], q_with[i]);
+    if (bypass > 0 && q_inj[i] > 0) {
+      const tempInAvg = q_inj_temp[i] / q_inj[i];
+      q_inj[i] -= bypass;
+      q_inj_temp[i] = q_inj[i] * tempInAvg;
+      q_with[i] -= bypass;
+    }
+  }
+
   // 2. Calculate net flow across node interfaces (advection flow velocities)
   // f[i] is flow from node i to node i+1 (upwards)
   // Mass balance at node i: q_inj[i] - q_with[i] = f[i] - f[i-1]
@@ -429,12 +488,15 @@ export const simulateStep = (
   // Water properties
   const rho = 1000; // kg/m³
   const Cp = 4180; // J/kgK
-  const cond_W_K = params.conductionCoef; // Effective thermal conduction W/K
   const U_loss_W_m2K = params.heatLossCoef; // W/m²K
   const H = params.tankHeight; // m
   const D = Math.sqrt((4 * V_tank) / (Math.PI * H)); // Tank diameter
   const nodeHeight = H / N;
   const nodeArea = Math.PI * D * nodeHeight; // Side area of node
+  // Geometry-correct inter-node conduction: UA = λ × A / Δz
+  // A = cross-section = V/H, Δz = H/N → UA = λ × (V/H) / (H/N) = λ × V × N / H²
+  const crossSection = V_tank / H; // m²
+  const cond_W_K = params.lambda * crossSection / nodeHeight; // W/K per interface
 
   for (let i = 0; i < N; i++) {
     const Ti = T[i];
