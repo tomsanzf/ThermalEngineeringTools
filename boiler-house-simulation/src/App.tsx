@@ -221,6 +221,10 @@ export default function App() {
     const tDew = pH2O_in > 0 ? (243.5 * Math.log(pH2O_in / 0.006112)) / (17.67 - Math.log(pH2O_in / 0.006112)) : 0;
 
     const solveBoilerHouse = (_pinchActive: boolean, fixedUA?: number) => {
+      let tBdIn_local = 0;
+      let tBdOut_local = 0;
+      let tMuInBd_local = 0;
+      let tMuOutBd_local = 0;
       let usersSteamFlow_local = S.steamFlowUsers;
       let peggingSteamFlow_local = 0;
       let boilerSteamFlow_local = S.steamFlowUsers * 1.1;
@@ -323,10 +327,19 @@ export default function App() {
           qBdRecovery_local = (S.bdRecoveryEff / 100) * qMax_bd;
           tMakeup3 = tMakeup2 + (makeupFlow_local > 0 ? (qBdRecovery_local * 3600) / (makeupFlow_local * 4.187) : 0);
           tMakeup3 = Math.min(tDaea, tMakeup3);
+
+          tBdIn_local = tDaea;
+          tBdOut_local = tDaea - (mBdLiq_local > 0 ? (qBdRecovery_local * 3600) / (mBdLiq_local * 4.187) : 0);
+          tMuInBd_local = tMakeup2;
+          tMuOutBd_local = tMakeup3;
         } else {
           mFlash_local = 0;
           mBdLiq_local = mBlowdown_local;
           qBdRecovery_local = 0;
+          tBdIn_local = tDaea;
+          tBdOut_local = tDaea;
+          tMuInBd_local = tMakeup2;
+          tMuOutBd_local = tMakeup2;
         }
 
         tMakeupEffective_local = tMakeup3;
@@ -569,6 +582,10 @@ return {
         mFlash: mFlash_local,
         mBdLiq: mBdLiq_local,
         tMakeupEffective: tMakeupEffective_local,
+        tBdIn: tBdIn_local,
+        tBdOut: tBdOut_local,
+        tMuInBd: tMuInBd_local,
+        tMuOutBd: tMuOutBd_local,
       };
     };
 
@@ -610,6 +627,10 @@ const ecoFlueTempOutClamped = result.ecoFlueTempOutClamped;
     const mFlash = result.mFlash;
     const mBdLiq = result.mBdLiq;
     const tMakeupEffective = result.tMakeupEffective;
+    const tBdIn = result.tBdIn;
+    const tBdOut = result.tBdOut;
+    const tMuInBd = result.tMuInBd;
+    const tMuOutBd = result.tMuOutBd;
 
     const tFW = tFW_out;
     const hFW = satEnthalpyLiquid(tFW);
@@ -688,7 +709,11 @@ const ecoFlueTempOutClamped = result.ecoFlueTempOutClamped;
       mCondensateWater,
       qBdRecovery,
       mFlash,
-      mBdLiq
+      mBdLiq,
+      tBdIn,
+      tBdOut,
+      tMuInBd,
+      tMuOutBd
     };
   }, [S, leadingVariable]);
   const handleExportState = () => {
@@ -1337,11 +1362,42 @@ const ecoFlueTempOutClamped = result.ecoFlueTempOutClamped;
                   </div>
                 </div>
                 <div className="form-row">
-                  <label>Recovered Heat Power</label>
+                  <label>{timeUnitMode === 'yearly' ? 'Recovered Energy' : 'Recovered Heat Power'}</label>
                   <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text)', padding: '0.2rem 0' }}>
                     {fmtVal(R.qBdRecovery * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)} {timeUnitMode === 'yearly' ? 'MWh' : 'kW'}
                   </div>
                 </div>
+                
+                {/* BDHR HX Temperature Table */}
+                <table style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  marginTop: '0.75rem',
+                  fontSize: '0.8rem',
+                  backgroundColor: 'rgba(255,255,255,0.02)',
+                  border: '1px solid rgba(255,255,255,0.05)',
+                  borderRadius: '4px'
+                }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                      <th style={{ padding: '0.35rem 0.5rem', textAlign: 'left', fontWeight: '600', color: 'var(--text-dim)' }}>Stream</th>
+                      <th style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontWeight: '600', color: 'var(--text-dim)' }}>Inlet Temp</th>
+                      <th style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontWeight: '600', color: 'var(--text-dim)' }}>Outlet Temp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '0.35rem 0.5rem', color: 'var(--blowdown)' }}>Blowdown</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tBdIn, 1)} °C</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tBdOut, 1)} °C</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: '0.35rem 0.5rem', color: 'var(--water)' }}>Makeup Water</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tMuInBd, 1)} °C</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tMuOutBd, 1)} °C</td>
+                    </tr>
+                  </tbody>
+                </table>
               </>
             )}
           </>
