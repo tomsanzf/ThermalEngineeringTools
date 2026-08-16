@@ -102,7 +102,8 @@ function flueGasLossPct(tFlue: number, tAir: number, o2pct: number): number {
 interface SimulationState {
   // Fuel & Combustion
   gasFlowRate: number;       // Nm³/h
-  gasInputMode: 'lhv' | 'hhv';
+  gasInputMode: 'volume' | 'lhv' | 'hhv';
+  gasInputValue: number;     // value in LHV or HHV depending on mode
   gasLHV: number;            // kWh/Nm³
   gasHHV: number;            // kWh/Nm³
   airTempIn: number;         // °C
@@ -145,14 +146,11 @@ interface SimulationState {
   ecoFlueTempOutManual: number;
   ecoUAMode: 'auto_ua' | 'manual_temp';
   ecoUA_design: number;
-  condenserDTmin: number;
-  condenserT14: number;
-  condenserInputMode: 'dtmin' | 't14';
-  pinchDTmin: number;
 }
 const DEFAULT_STATE: SimulationState = {
-  gasFlowRate: 72.57,
-  gasInputMode: 'hhv',
+  gasFlowRate: 100,
+  gasInputMode: 'volume',
+  gasInputValue: 100,
   gasLHV: 10.35,
   gasHHV: 11.63,
   airTempIn: 20,
@@ -189,10 +187,6 @@ const DEFAULT_STATE: SimulationState = {
   waterInputMode: 'condensate',
   makeupFlowManual: 305,
   refTemp: 20,
-  condenserDTmin: 5.0,
-  condenserT14: 35.0,
-  condenserInputMode: 'dtmin',
-  pinchDTmin: 10.0,
 };
 export default function App() {
   const [S, setS] = useState<SimulationState>(DEFAULT_STATE);
@@ -227,7 +221,6 @@ export default function App() {
     const tDew = pH2O_in > 0 ? (243.5 * Math.log(pH2O_in / 0.006112)) / (17.67 - Math.log(pH2O_in / 0.006112)) : 0;
 
     const solveBoilerHouse = (_pinchActive: boolean, fixedUA?: number) => {
-      console.groupCollapsed(`Solver Run: ${_pinchActive ? "Pinch Active" : "Base Case"}`);
       let tBdIn_local = 0;
       let tBdOut_local = 0;
       let tMuInBd_local = 0;
@@ -240,12 +233,20 @@ export default function App() {
       let condFlow_local = S.steamFlowUsers * (S.condPctManual / 100);
       let makeupFlow_local = Math.max(0, fwFlow_local - condFlow_local);
       let x_bd_local = 0;
-      let ecoFlueTempOut_local = S.flueGasTemp;
-      let tMakeupCondenserOut_local = S.makeupTemp;
 
       let gasFlowRate_local = S.gasFlowRate;
-      let gasPowerLHV_local = gasFlowRate_local * S.gasLHV;
-      let gasPowerHHV_local = gasFlowRate_local * S.gasHHV;
+      let gasPowerLHV_local = S.gasInputValue;
+      if (S.gasInputMode === 'volume') {
+        gasFlowRate_local = S.gasInputValue;
+        gasPowerLHV_local = gasFlowRate_local * S.gasLHV;
+      } else if (S.gasInputMode === 'lhv') {
+        gasPowerLHV_local = S.gasInputValue;
+        gasFlowRate_local = S.gasLHV > 0 ? gasPowerLHV_local / S.gasLHV : 0;
+      } else {
+        gasPowerLHV_local = S.gasHHV > 0 ? (S.gasInputValue * S.gasLHV / S.gasHHV) : S.gasInputValue;
+        gasFlowRate_local = S.gasLHV > 0 ? gasPowerLHV_local / S.gasLHV : 0;
+      }
+      let gasPowerHHV_local = gasPowerLHV_local * (S.gasHHV / (S.gasLHV || 1));
 
       let fwConductivity_local = 0;
       let flueLossKW_local = 0;
@@ -258,10 +259,6 @@ export default function App() {
       let qCondenserSensible_local = 0;
       let qCondenserLatent_local = 0;
       let mCondensateWater_local = 0;
-      let condPinch_local = 0;
-      let condLMTD_local: number | string = "-";
-      let condUA_local: number | string = "-";
-      let condenserBindingConstraint_local = "-";
       let qBdRecovery_local = 0;
       let mFlash_local = 0;
       let mBdLiq_local = 0;
@@ -279,22 +276,17 @@ export default function App() {
       let flueLossPct_local = flueGasLossPct(flueTempEff_local, S.airTempIn, S.o2Flue);
       let combustEff_local = Math.max(0, 100 - flueLossPct_local - radLossPct);
 
-      for (let iter = 0; iter < 15; iter++) {
+      for (let iter = 0; iter < 5; iter++) {
         flueTempEff_local = S.flueGasTemp;
 
-        // Calculate makeup water temperature after Condenser (from previous iteration)
-        const qCond_prev = qCondenserSensible_local + qCondenserLatent_local;
-        if (S.ecoEnabled && S.ecoCondensingEnabled) {
-          tMakeupCondenserOut_local = S.makeupTemp + (makeupFlow_local > 0 ? (qCond_prev * 3600) / (makeupFlow_local * 4.187) : 0);
-          tMakeupCondenserOut_local = Math.min(tDaea, tMakeupCondenserOut_local);
-        } else {
-          tMakeupCondenserOut_local = S.makeupTemp;
-        }
-
-        let tMakeup1 = tMakeupCondenserOut_local;
+        // 1. Pinch HX pre-heating & pre-cooling sequence
+        //    Uses a minimum approach temperature of 10°C at the hot end (T_DA - T_makeup_out >= 10°C).
+        //    This is physically cleaner than a fixed UA or fixed effectiveness:
+        //    it guarantees LMTD > 0 and prevents the T_makeup_out = T_DA (zero delta-T) problem.
+        let tMakeup1 = S.makeupTemp;
         let tMakeup2 = tMakeup1;
         if (S.ecoEnabled && _pinchActive) {
-          const PINCH_APPROACH_TEMP = Math.max(0.1, S.pinchDTmin); // °C minimum temperature difference at the hot end
+          const PINCH_APPROACH_TEMP = 10.0; // °C minimum temperature difference at the hot end
           const C_mu = (makeupFlow_local * 4.187) / 3600;
           const C_fw = (fwFlow_local * 4.187) / 3600;
 
@@ -417,184 +409,23 @@ export default function App() {
           ecoLMTD_local = 0;
           ecoUA_local = 0;
         }
-        ecoFlueTempOut_local = ecoFlueTempOutClamped_local;
 
         if (S.ecoEnabled && S.ecoCondensingEnabled) {
-          const tFlueInCond = ecoFlueTempOutClamped_local; // T13
+          const tFlueInCond = ecoFlueTempOutClamped_local;
           const tWaterInCond = S.makeupTemp;
-          const tDew = 55.2; // natural gas dew point
+          const dtInCond = Math.max(0, tFlueInCond - tWaterInCond);
+          const tFlueOutCond = tWaterInCond + Math.min(20, dtInCond * 0.5);
+          ecoFlueTempOutClamped_local = Math.max(S.airTempIn + 5, tFlueOutCond);
           
-          // Flow heat capacities
-          const C_water = (makeupFlow_local * 4.187) / 3600; // kW/K
-          
-          // Moist-air property functions
-          const getHumidityRatio = (T: number) => {
-            if (T >= tDew) {
-              return 0.622 * 0.12 / (1.0 - 0.12); // inlet humidity ratio w_in = 0.084818
-            }
-            const y_sat = 0.02 + 0.00286 * (T - 20);
-            const y = Math.max(0, Math.min(0.12, y_sat));
-            return 0.622 * y / (1.0 - y);
-          };
-          
-          const getMoistEnthalpy = (T: number) => {
-            const w = getHumidityRatio(T);
-            return 1.006 * T + w * (2501 + 1.86 * T); // kJ/kg dry air
-          };
-          
-          // Dry flue gas mass flow rate
-          const w_in = getHumidityRatio(tFlueInCond);
-          const mFlueDry = mFlueGas_kg_h / (1.0 + w_in); // kg dry air / h
-          
-          const getHeatReleased = (T_out: number) => {
-            const h_in = getMoistEnthalpy(tFlueInCond);
-            const h_out = getMoistEnthalpy(T_out);
-            return (mFlueDry * (h_in - h_out)) / 3600; // kW
-          };
-          
-          // Water outlet temperature cap is now the Deaerator temperature (tDaea)
-          const tWaterOut_cap = tDaea; 
-          let Q_cond = 0;
-          let t14_solved = tFlueInCond;
-          
-          if (S.condenserInputMode === 'dtmin') {
-            const DT = Math.max(0.1, S.condenserDTmin);
-            
-            // 1. Hot End approach limit (with DA temp cap)
-            const tWaterOut_max = Math.min(tWaterOut_cap, tFlueInCond - DT);
-            const qLimit_hotEnd = C_water * Math.max(0, tWaterOut_max - tWaterInCond);
-            
-            // 2. Dew Point approach limit (only if gas inlet is above dew point)
-            let qLimit_boundary = Infinity;
-            if (tFlueInCond > tDew) {
-              const qDry = (mFlueDry * (getMoistEnthalpy(tFlueInCond) - getMoistEnthalpy(tDew))) / 3600;
-              const tWaterMid_max = tDew - DT;
-              qLimit_boundary = qDry + C_water * Math.max(0, tWaterMid_max - tWaterInCond);
-            }
-            
-            // 3. Cold End approach limit
-            const tFlueOut_min = tWaterInCond + DT;
-            const qLimit_coldEnd = tFlueInCond > tFlueOut_min ? getHeatReleased(tFlueOut_min) : 0;
-            
-            // Bottleneck duty
-            Q_cond = Math.min(qLimit_hotEnd, qLimit_boundary, qLimit_coldEnd);
-            
-            // Solve for exit temperature T14 using bisection
-            let low = tWaterInCond;
-            let high = tFlueInCond;
-            for (let i = 0; i < 20; i++) {
-              const mid = (low + high) / 2;
-              const q_mid = getHeatReleased(mid);
-              if (q_mid >= Q_cond) {
-                low = mid;
-                t14_solved = mid;
-              } else {
-                high = mid;
-              }
-            }
-            
-          } else {
-            // Mode B: User edits T14 directly
-            // Clamp T14 to prevent physical impossibility
-            const t14_target = Math.max(tWaterInCond + 0.1, Math.min(tFlueInCond, S.condenserT14));
-            const q_potential = getHeatReleased(t14_target);
-            
-            // Cap based on water outlet cap (DA temperature) while preventing hot-end cross (epsilon = 0.1 K)
-            const qWaterMax = C_water * Math.max(0, Math.min(tWaterOut_cap, tFlueInCond - 0.1) - tWaterInCond);
-            
-            // Cap based on dew point boundary to prevent temperature crossing at the boundary
-            let qLimit_boundary = Infinity;
-            if (tFlueInCond > tDew) {
-              const qDry = getHeatReleased(tDew);
-              const tWaterMid_max = tDew - 0.1; // same 0.1 K epsilon convention
-              qLimit_boundary = qDry + C_water * Math.max(0, tWaterMid_max - tWaterInCond);
-            }
-            
-            const qCap = Math.min(qWaterMax, qLimit_boundary);
-            
-            if (q_potential <= qCap) {
-              Q_cond = q_potential;
-              t14_solved = t14_target;
-            } else {
-              Q_cond = qCap;
-              // Recalculate exit temperature using bisection
-              let low = tWaterInCond;
-              let high = tFlueInCond;
-              for (let i = 0; i < 20; i++) {
-                const mid = (low + high) / 2;
-                const q_mid = getHeatReleased(mid);
-                if (q_mid >= Q_cond) {
-                  low = mid;
-                  t14_solved = mid;
-                } else {
-                  high = mid;
-                }
-              }
-            }
-          }
-          
-          // Compute actual water temperatures
-          const tWaterOut_actual = tWaterInCond + (C_water > 0 ? Q_cond / C_water : 0);
-          
-          // Water temp at the dewpoint boundary (Zone 2 outlet)
-          const qZone2_actual = tFlueInCond > tDew 
-            ? Math.max(0, (mFlueDry * (getMoistEnthalpy(Math.min(tFlueInCond, tDew)) - getMoistEnthalpy(t14_solved))) / 3600)
-            : Q_cond;
-          const tWaterMid_actual = tWaterInCond + (C_water > 0 ? qZone2_actual / C_water : 0);
-          
-          // Approach temperatures
-          const dtHot = tFlueInCond - tWaterOut_actual;
-          const dtDewBoundary = tFlueInCond > tDew ? (tDew - tWaterMid_actual) : Infinity;
-          const dtCold = t14_solved - tWaterInCond;
-          
-          const dtMin_actual = Math.min(dtHot, dtDewBoundary, dtCold);
-          
-          // Determine binding constraint
-          if (tWaterOut_actual >= tWaterOut_cap - 0.05) {
-            condenserBindingConstraint_local = "Water Outlet Cap (DA Temp)";
-          } else {
-            const minDT = Math.min(dtHot, dtDewBoundary, dtCold);
-            if (Math.abs(minDT - dtCold) < 0.05) {
-              condenserBindingConstraint_local = "Cold End Approach (T14 - T_water_in)";
-            } else if (tFlueInCond > tDew && Math.abs(minDT - dtDewBoundary) < 0.05) {
-              condenserBindingConstraint_local = "Dew Point Approach (T_dew - T_water_mid)";
-            } else {
-              condenserBindingConstraint_local = "Hot End Approach (T13 - T_water_out)";
-            }
-          }
-          
-          // Compute sensible and latent heat fractions algebraically
-          const w_out = getHumidityRatio(t14_solved);
-          const dh_sens = (1.006 + 1.86 * w_in) * tFlueInCond - (1.006 + 1.86 * w_out) * t14_solved;
-          const dh_latent = 2501 * (w_in - w_out);
-          
-          qCondenserSensible_local = (mFlueDry * dh_sens) / 3600;
-          qCondenserLatent_local = (mFlueDry * dh_latent) / 3600;
-          mCondensateWater_local = mFlueDry * (w_in - w_out);
-          
-          // Final stack temperature
-          ecoFlueTempOutClamped_local = Math.max(S.airTempIn + 5, t14_solved);
-          condPinch_local = dtMin_actual;
-          
-          // LMTD and UA Calculations
-          if (dtHot > 0 && dtCold > 0 && condPinch_local > 0) {
-            const dt_max = Math.max(dtHot, dtCold);
-            const dt_min = Math.min(dtHot, dtCold);
-            const lmtd = Math.abs(dtHot - dtCold) < 1e-5 ? dtHot : (dt_max - dt_min) / Math.log(dt_max / dt_min);
-            condLMTD_local = lmtd;
-            condUA_local = Q_cond / lmtd;
-          } else {
-            condLMTD_local = "N/A (Temp Cross)";
-            condUA_local = "N/A (Temp Cross)";
-          }
+          qCondenserSensible_local = 50; 
+          const y_H2O_in = 0.12; 
+          const y_H2O_sat_out = Math.min(y_H2O_in * 0.9, Math.max(0.02, 0.01 + 0.002 * (ecoFlueTempOutClamped_local - 20)));
+          const delta_y_H2O = Math.max(0, y_H2O_in - y_H2O_sat_out);
+          mCondensateWater_local = mFlueGas_kg_h * delta_y_H2O; 
+          qCondenserLatent_local = (mCondensateWater_local * 2440) / 3600; 
         } else {
           mCondensateWater_local = 0;
-          qCondenserSensible_local = 0;
           qCondenserLatent_local = 0;
-          condPinch_local = 0;
-          condLMTD_local = "-";
-          condUA_local = "-";
-          condenserBindingConstraint_local = "-";
         }
 
         qCondenser_local = qCondenserSensible_local + qCondenserLatent_local;
@@ -612,18 +443,16 @@ export default function App() {
 
 
         // 3. Mass & Energy Balances across Boiler House
-        const hFW_inlet = (S.ecoEnabled && _pinchActive) ? satEnthalpyLiquid(tFWEffective_local) : hFW_daea;
         const d_p = hSteam - hFW_daea;
-        const d_p_inlet = hSteam - hFW_inlet;
         const d_m = hFW_daea - hMakeup_local;
         const d_c = hFW_daea - hCond;
         
         if (leadingVariable === 'gas') {
-          const Q_transferred_total = gasPowerLHV_local * combustEff_local / 100;
-          const Q_total_kJ_h = Q_transferred_total * 3600.0;
+          const Q_transferred_daea = gasPowerLHV_local * combustEff_local / 100;
+          const Q_total_kJ_h = (Q_transferred_daea + ecoHeat_local) * 3600.0;
 
           // 1. Total boiler steam generated
-          const M_boiler = Math.max(0, (Q_total_kJ_h - mBlowdown_local * (hLiqSat - hFW_inlet)) / d_p_inlet);
+          const M_boiler = Math.max(0, (Q_total_kJ_h - mBlowdown_local * (hLiqSat - hFW_daea)) / d_p);
 
           // 2. Pegging steam flow P
           if (S.condFlowAuto) {
@@ -674,36 +503,23 @@ export default function App() {
           x_bd_local = usersSteamFlow_local > 0 ? (mBlowdown_local / usersSteamFlow_local) * 100 : 0;
         } else {
           usersSteamFlow_local = S.steamFlowUsers;
-          const c_low = S.daeaCondMode === 'manual' ? S.daeaConductivityManual : Math.min(S.makeupConductivity, S.condConductivity);
-          const c_high = S.daeaCondMode === 'manual' ? S.daeaConductivityManual : Math.max(S.makeupConductivity, S.condConductivity);
-          const c_clamped = Math.max(c_low, Math.min(c_high, S.daeaConductivityManual));
-          const condDelta = S.makeupConductivity - S.condConductivity;
-
+          if (S.condFlowAuto) {
+            condFlow_local = usersSteamFlow_local * (S.condPctManual / 100);
+          } else {
+            condFlow_local = S.condReturnFlowManual;
+          }
+          // Iterate deaerator energy balance to find pegging steam flow (since fwFlow = usersSteam + peggingSteam + mBlowdown)
           let peggingSteam_est = peggingSteamFlow_local;
           for (let j = 0; j < 5; j++) {
             const fw_est = usersSteamFlow_local + peggingSteam_est + mBlowdown_local;
-            const M_liquid_est = Math.max(0, fw_est - peggingSteam_est);
-
-            if (S.daeaCondMode === 'manual' && Math.abs(condDelta) > 0.01) {
-              makeupFlow_local = (fw_est * c_clamped - M_liquid_est * S.condConductivity) / condDelta;
-              makeupFlow_local = Math.max(0, Math.min(M_liquid_est, makeupFlow_local));
-              condFlow_local = Math.max(0, M_liquid_est - makeupFlow_local);
-            } else {
-              if (S.condFlowAuto) {
-                condFlow_local = usersSteamFlow_local * (S.condPctManual / 100);
-              } else {
-                condFlow_local = S.condReturnFlowManual;
-              }
-              makeupFlow_local = Math.max(0, M_liquid_est - condFlow_local);
-            }
-
-            peggingSteam_est = Math.max(0, (condFlow_local * d_c + makeupFlow_local * d_m) / d_p);
+            peggingSteam_est = Math.max(0, (fw_est * d_m - condFlow_local * (d_m - d_c)) / (d_p + d_m));
           }
           peggingSteamFlow_local = peggingSteam_est;
           boilerSteamFlow_local = usersSteamFlow_local + peggingSteamFlow_local;
+          makeupFlow_local = Math.max(0, boilerSteamFlow_local - condFlow_local);
 
-          fwConductivity_local = (boilerSteamFlow_local + mBlowdown_local) > 0
-            ? (condFlow_local * S.condConductivity + makeupFlow_local * S.makeupConductivity) / (boilerSteamFlow_local + mBlowdown_local)
+          fwConductivity_local = fwFlow_local > 0
+            ? (condFlow_local * S.condConductivity + makeupFlow_local * S.makeupConductivity) / fwFlow_local
             : S.makeupConductivity;
 
           if (S.bdMode === 'manual') {
@@ -717,23 +533,22 @@ export default function App() {
           x_bd_local = usersSteamFlow_local > 0 ? (mBlowdown_local / usersSteamFlow_local) * 100 : 0;
 
           // Boiler furnace heat balance:
-          // The boiler burner must supply the heat required to raise feedwater from its entering state (hFW_inlet)
-          // to saturated steam (hSteam) and saturated liquid blowdown (hLiqSat).
-          const Q_transferred_total = Math.max(0,
-            ((usersSteamFlow_local + peggingSteamFlow_local) * d_p_inlet
-              + mBlowdown_local * (hLiqSat - hFW_inlet)) / 3600
+          // The boiler burner must supply the heat required to raise feedwater from its entering state
+          // (tFW_out_local) to saturated steam (hSteam) and saturated liquid blowdown (hLiqSat).
+          // Referenced to DA outlet (tDaea): Q_burner = (steam × d_p + blowdown × (hLiqSat - hFW_daea))/3600 - ecoHeat
+          const Q_transferred_daea = Math.max(0,
+            (((usersSteamFlow_local + peggingSteamFlow_local) * d_p
+              + mBlowdown_local * (hLiqSat - hFW_daea)) / 3600)
+            - ecoHeat_local
           );
-          gasPowerLHV_local = combustEff_local > 0 ? (Q_transferred_total * 100 / combustEff_local) : 0;
+          gasPowerLHV_local = combustEff_local > 0 ? (Q_transferred_daea * 100 / combustEff_local) : 0;
           gasPowerHHV_local = gasPowerLHV_local * (S.gasHHV / S.gasLHV);
           gasFlowRate_local = S.gasLHV > 0 ? (gasPowerLHV_local / S.gasLHV) : 0;
         }
 
         fwFlow_local = boilerSteamFlow_local + mBlowdown_local;
-        console.log(`  [Iter ${iter}] Gas LHV = ${gasPowerLHV_local.toFixed(2)} kW, Gas HHV = ${gasPowerHHV_local.toFixed(2)} kW, FW Flow = ${fwFlow_local.toFixed(1)} kg/h`);
       }
-      console.groupEnd();
 return {
-        ecoFlueTempOut: ecoFlueTempOut_local,
         ecoFlueTempOutClamped: ecoFlueTempOutClamped_local,
         flueTempEff: flueTempEff_local,
         flueLossPct: flueLossPct_local,
@@ -767,15 +582,10 @@ return {
         mFlash: mFlash_local,
         mBdLiq: mBdLiq_local,
         tMakeupEffective: tMakeupEffective_local,
-        tMakeupCondenserOut: tMakeupCondenserOut_local,
         tBdIn: tBdIn_local,
         tBdOut: tBdOut_local,
         tMuInBd: tMuInBd_local,
         tMuOutBd: tMuOutBd_local,
-        condPinch: condPinch_local,
-        condLMTD: condLMTD_local,
-        condUA: condUA_local,
-        condenserBindingConstraint: condenserBindingConstraint_local,
       };
     };
 
@@ -785,9 +595,7 @@ return {
 
     // Stage 2: Solve the actual operating case using Stage 1's design UA!
     const result = (S.pinchEnabled && S.ecoEnabled) ? solveBoilerHouse(true, ecoUA_design) : design;
-    const ecoFlueTempOut = result.ecoFlueTempOut;
-    const tMakeupCondenserOut = result.tMakeupCondenserOut;
-    const ecoFlueTempOutClamped = result.ecoFlueTempOutClamped;
+const ecoFlueTempOutClamped = result.ecoFlueTempOutClamped;
     const flueTempEff = result.flueTempEff;
     const flueLossPct = result.flueLossPct;
     const combustEff = result.combustEff;
@@ -823,10 +631,6 @@ return {
     const tBdOut = result.tBdOut;
     const tMuInBd = result.tMuInBd;
     const tMuOutBd = result.tMuOutBd;
-    const condPinch = result.condPinch;
-    const condLMTD = result.condLMTD;
-    const condUA = result.condUA;
-    const condenserBindingConstraint = result.condenserBindingConstraint;
 
     const tFW = tFW_out;
     const hFW = satEnthalpyLiquid(tFW);
@@ -835,35 +639,16 @@ return {
     const steamHeatTransferred = (boilerSteamFlow / 3600) * (hSteam - hFW); // kW
     const blowdownHeatLoss = (mBlowdown / 3600) * (hLiqSat - hFW); // kW
     const totalBoilerHeat = steamHeatTransferred + blowdownHeatLoss; // kW
-    
-    // Boiler Efficiency (Indirect Heat-Loss Method)
-    let boilerEff = 0;
-    const hFW_inlet_eff = satEnthalpyLiquid(tFWEffective);
-    const blowdownHeatLoss_eff = (mBlowdown / 3600) * (hLiqSat - hFW_inlet_eff);
-    if (S.gasInputMode === 'lhv') {
-      const blowdownLossPct = gasPowerLHV > 0 ? (blowdownHeatLoss_eff / gasPowerLHV) * 100 : 0;
-      boilerEff = 100 - flueLossPct - S.radLossPct - blowdownLossPct;
-    } else {
-      const sensibleFlueLossPct = gasPowerHHV > 0 ? (flueLossKW / gasPowerHHV) * 100 : 0;
-      const latentFlueLossPct = gasPowerHHV > 0 ? ((gasPowerHHV - gasPowerLHV) / gasPowerHHV) * 100 : 0;
-      const radLossPctHHV = gasPowerHHV > 0 ? (radLossKW / gasPowerHHV) * 100 : 0;
-      const blowdownLossPctHHV = gasPowerHHV > 0 ? (blowdownHeatLoss_eff / gasPowerHHV) * 100 : 0;
-      boilerEff = 100 - sensibleFlueLossPct - latentFlueLossPct - radLossPctHHV - blowdownLossPctHHV;
-    }
-    boilerEff = Math.max(0, boilerEff);
-
-    // Overall Boilerhouse Efficiency (Upper Bound)
+    const boilerEff = gasPowerLHV > 0
+      ? Math.max(0, (steamHeatTransferred / gasPowerLHV) * 100)
+      : 0;
+    // Overall Boilerhouse Efficiency
     const hRef = enthalpyLiquid(S.refTemp);
     const Q_export_net = (usersSteamFlow / 3600) * (hSteam - hRef) - (condFlow / 3600) * (hCond - hRef);
-    const fuelPower = S.gasInputMode === 'lhv' ? gasPowerLHV : gasPowerHHV;
-    const bhEffUpper = fuelPower > 0 ? Math.max(0, (Q_export_net / fuelPower) * 100) : 0;
 
-    // Overall Boilerhouse Efficiency (Lower Bound)
-    const tRefLower = Math.max(S.condReturnTemp, tDaea);
-    const hRefLower = enthalpyLiquid(tRefLower);
-    const Q_export_net_lower = (usersSteamFlow / 3600) * (hSteam - hRefLower) - (condFlow / 3600) * (hCond - hRefLower);
-    const bhEffLower = fuelPower > 0 ? Math.max(0, (Q_export_net_lower / fuelPower) * 100) : 0;
-
+    const bhEff = gasPowerHHV > 0
+      ? Math.max(0, (Q_export_net / gasPowerHHV) * 100)
+      : 0;
     const condPct = usersSteamFlow > 0 ? (condFlow / usersSteamFlow * 100) : 0;
     // Solve resulting drum conductivity
     let boilerConductivity = S.boilerConductivity;
@@ -873,9 +658,6 @@ return {
         ? (condFlow * S.condConductivity + makeupFlow * S.makeupConductivity) / mBlowdown
         : 9999;
     }
-
-    // Redundant outer calculations removed (now computed inside solver loop)
-
     return {
       tSat,
       boilerConductivity: Math.round(boilerConductivity),
@@ -902,7 +684,6 @@ return {
       ecoHeat,
       ecoDt,
       ecoLMTD,
-      ecoFlueTempOut,
       ecoFlueTempOutClamped,
       tFW,
       hFW,
@@ -911,13 +692,11 @@ return {
       totalBoilerHeat,
       boilerEff,
       Q_export_net,
-      bhEffUpper,
-      bhEffLower,
+      bhEff,
       excessAir,
       x_bd,
       usersSteamFlow,
       tMakeupEffective,
-      tMakeupCondenserOut,
       tFWEffective,
       pinchHeat,
       ecoUA_design,
@@ -934,11 +713,7 @@ return {
       tBdIn,
       tBdOut,
       tMuInBd,
-      tMuOutBd,
-      condPinch,
-      condLMTD,
-      condUA,
-      condenserBindingConstraint
+      tMuOutBd
     };
   }, [S, leadingVariable]);
   const handleExportState = () => {
@@ -1000,66 +775,28 @@ return {
   };
 
   // Click handlers
-  const handleOpenPopup = (key: string, _e?: React.MouseEvent) => {
-    if (key === 'addEconomizer') {
-      setS(prev => ({ ...prev, ecoEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    if (key === 'addCondenser') {
-      setS(prev => ({ ...prev, ecoCondensingEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    if (key === 'addBDHR') {
-      setS(prev => ({ ...prev, bdRecoveryEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    if (key === 'addPinchHX') {
-      setS(prev => ({ ...prev, pinchEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    setPopupPos({ x: 20, y: 20 });
+  const handleOpenPopup = (key: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     setPopupKey(key);
+    setPopupPos({ x: 12, y: 12 });
   };
-  const handleValueChange = (key: string, value: number) => {
+  const handleGasModeChange = (newMode: 'volume' | 'lhv' | 'hhv') => {
     setS(prev => {
-      const next = { ...prev };
-      if (key === 'gasPower') {
-        const hv = prev.gasInputMode === 'lhv' ? prev.gasLHV : prev.gasHHV;
-        next.gasFlowRate = hv > 0 ? value / hv : 0;
-        setLeadingVariable('gas');
-      } else if (key === 'gasFlowRate') {
-        next.gasFlowRate = value;
-        setLeadingVariable('gas');
-      } else if (key === 'steamFlowUsers') {
-        next.steamFlowUsers = value;
-        setLeadingVariable('steam');
-      } else if (key === 'daeaTemp') {
-        const satT = satTempFromP(prev.daeaPressure);
-        const isMax = value >= satT;
-        next.daeaTempMode = isMax ? 'auto' : 'manual';
-        next.daeaTempManual = Math.min(satT, value);
-      } else if (key === 'daeaConductivity') {
-        next.daeaCondMode = 'manual';
-        next.daeaConductivityManual = value;
-      } else if (key === 'condenserT14') {
-        next.condenserT14 = value;
-        next.condenserInputMode = 't14';
-      } else {
-        // @ts-ignore
-        next[key] = value;
+      let newInputValue = prev.gasInputValue;
+      if (newMode === 'volume') {
+        newInputValue = R.gasFlowRate;
+      } else if (newMode === 'lhv') {
+        newInputValue = R.gasPowerLHV;
+      } else if (newMode === 'hhv') {
+        newInputValue = R.gasPowerHHV;
       }
-      return next;
+      return {
+        ...prev,
+        gasInputMode: newMode,
+        gasInputValue: newInputValue,
+        gasFlowRate: R.gasFlowRate
+      };
     });
-  };
-  const handleGasModeChange = (newMode: 'lhv' | 'hhv') => {
-    setS(prev => ({
-      ...prev,
-      gasInputMode: newMode
-    }));
   };
   const renderPopupContent = (key: string) => {
     switch (key) {
@@ -1122,53 +859,52 @@ return {
         );
       case 'gasInput': {
         const mult = timeUnitMode === 'yearly' ? 8.76 : 1.0;
-        const powerVal = S.gasInputMode === 'lhv' ? R.gasPowerLHV : R.gasPowerHHV;
-        const powerToShow = timeUnitMode === 'yearly' ? Math.round(powerVal * mult) : Number((powerVal * mult).toFixed(1));
-        const flowToShow = timeUnitMode === 'yearly' ? Math.round(R.gasFlowRate * mult) : Number((R.gasFlowRate * mult).toFixed(1));
-        
+        const mainLabel = timeUnitMode === 'yearly'
+          ? (S.gasInputMode === 'volume' ? 'Yearly Volume' : S.gasInputMode === 'lhv' ? 'Yearly Energy (LHV)' : 'Yearly Energy (HHV)')
+          : (S.gasInputMode === 'volume' ? 'Volume Flow' : S.gasInputMode === 'lhv' ? 'LHV Power' : 'HHV Power');
+        const mainUnit = timeUnitMode === 'yearly'
+          ? (S.gasInputMode === 'volume' ? 'kNm³' : 'MWh')
+          : (S.gasInputMode === 'volume' ? 'Nm³/h' : 'kW');
+
+        const val_raw = leadingVariable === 'gas'
+          ? (S.gasInputMode === 'volume' ? S.gasFlowRate : S.gasInputValue)
+          : (S.gasInputMode === 'volume' ? R.gasFlowRate : (S.gasInputMode === 'lhv' ? R.gasPowerLHV : R.gasPowerHHV));
+
+        const valueToShow = timeUnitMode === 'yearly' ? Math.round(val_raw * mult) : Number((val_raw * mult).toFixed(1));
+
         return (
           <>
             <div className="form-row">
-              <label>Heating Value Type</label>
+              <label>Input Mode</label>
               <select 
                 value={S.gasInputMode} 
                 onChange={(e) => handleGasModeChange(e.target.value as any)}
               >
-                <option value="lhv">LHV (Lower Heating Value)</option>
-                <option value="hhv">HHV (Higher Heating Value)</option>
+                <option value="volume">{timeUnitMode === 'yearly' ? 'Yearly volume' : 'Volume flow'}</option>
+                <option value="lhv">{timeUnitMode === 'yearly' ? 'Yearly Energy (LHV)' : 'Power (LHV)'}</option>
+                <option value="hhv">{timeUnitMode === 'yearly' ? 'Yearly Energy (HHV)' : 'Power (HHV)'}</option>
               </select>
             </div>
-            
             <div className="form-row">
-              <label>{`Gas Power (${S.gasInputMode.toUpperCase()})`}</label>
+              <label>{mainLabel}</label>
               <div className="input-with-unit">
                 <ClampedNumericInput 
                   min={0}
                   defaultValue={100}
-                  value={powerToShow}
+                  value={valueToShow}
                   onChange={(v) => {
-                    handleValueChange('gasPower', v);
+                    setLeadingVariable('gas');
+                    const hourlyVal = v / mult;
+                    setS(prev => ({
+                      ...prev,
+                      gasInputValue: hourlyVal,
+                      gasFlowRate: prev.gasInputMode === 'volume' ? hourlyVal : prev.gasFlowRate
+                    }));
                   }}
                 />
-                <span className="form-unit">{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</span>
+                <span className="form-unit">{mainUnit}</span>
               </div>
             </div>
-
-            <div className="form-row">
-              <label>Gas Flow Rate</label>
-              <div className="input-with-unit">
-                <ClampedNumericInput 
-                  min={0}
-                  defaultValue={10}
-                  value={flowToShow}
-                  onChange={(v) => {
-                    handleValueChange('gasFlowRate', v);
-                  }}
-                />
-                <span className="form-unit">{timeUnitMode === 'yearly' ? 'kNm³' : 'Nm³/h'}</span>
-              </div>
-            </div>
-
             <div className="form-row">
               <label>Gas LHV</label>
               <div className="input-with-unit">
@@ -1252,7 +988,7 @@ return {
 
               <tr>
                 <td style={{ width: '45%', textAlign: 'left' }}>Flue Gas O₂</td>
-                <td style={{ width: '35%' }} className="editable-cell">
+                <td style={{ width: '35%' }}>
                   <ClampedNumericInput 
                     step="0.1"
                     min={0.5}
@@ -1333,98 +1069,75 @@ return {
 
               {S.ecoEnabled && (
                 <>
-                  {S.ecoCondensingEnabled && (
+             {/* SECTION 2: Flue Gas Temperatures */}
+                  <tr>
+                    <td colSpan={3} className="section-title">Flue Gas Temperatures</td>
+                  </tr>
+                  <tr>
+                    <td style={{ width: '50%', fontWeight: '500' }}>Boiler Outlet (Flue In)</td>
+                    <td style={{ width: '50%', fontWeight: '500' }} colSpan={2}>After Eco (Flue Out)</td>
+                  </tr>
+                  <tr>
+                    <td className="display-val">{S.flueGasTemp} °C</td>
+                    <td colSpan={2} className="display-val">
+                      {S.pinchEnabled && S.ecoEnabled ? (
+                        <span style={{ color: 'var(--accent-orange)', fontWeight: '600' }}>{R.ecoFlueTempOutClamped.toFixed(0)} °C</span>
+                      ) : (
+                        <ClampedNumericInput 
+                          step="5"
+                          min={Math.ceil(R.tDaea + 5)}
+                          max={S.flueGasTemp - 5}
+                          defaultValue={130}
+                          value={S.ecoFlueTempOutManual}
+                          onChange={(v) => {
+                            setS(prev => ({ ...prev, ecoFlueTempOutManual: v }));
+                          }}
+                        />
+                      )}
+                    </td>
+                  </tr>
+                  
+{/* SECTION 3: FeedWater Temperature */}  <tr>
+                    <td colSpan={3} className="section-title">FeedWater Temperature</td>
+                  </tr>
+                  <tr>
+                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }}>{S.pinchEnabled ? 'Pre-heated Makeup Water' : 'Makeup Water'}</td>
+                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }} colSpan={2}>{S.pinchEnabled ? 'Pinch HX Inlet / Deaerator Outlet' : 'Deaerator Outlet'}</td>
+                  </tr>
+                  <tr>
+                    <td className="display-val">{S.pinchEnabled ? `${R.tMakeupEffective.toFixed(1)} °C` : `${S.makeupTemp.toFixed(1)} °C`}</td>
+                    <td colSpan={2} className="display-val">{R.tDaea.toFixed(1)} °C</td>
+                  </tr>
+                  <tr>
+                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }}>{S.pinchEnabled ? 'Pinch HX Outlet / Eco Inlet' : 'Eco Inlet'}</td>
+                    <td style={{ fontWeight: '500', fontSize: '0.7rem' }} colSpan={2}>Eco Outlet</td>
+                  </tr>
+                  <tr>
+                    <td className="display-val">{S.pinchEnabled ? `${R.tFWEffective.toFixed(1)} °C` : `${R.tDaea.toFixed(1)} °C`}</td>
+                    <td colSpan={2} className="display-val">{R.tFW.toFixed(1)} °C</td>
+                  </tr>
+
+                  {/* SECTION 3B: Condenser Data */}
+                  {S.ecoEnabled && S.ecoCondensingEnabled && (
                     <>
-                  <tr>
-                    <td colSpan={3} className="section-title">Condenser Data</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Flue Dew Point</td>
-                    <td className="display-val">{R.tDew.toFixed(1)}</td>
-                    <td className="display-val">°C</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Water Condensed</td>
-                    <td className="display-val">{fmtVal(R.mCondensateWater * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val">{timeUnitMode === 'yearly' ? 't' : 'kg/h'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Sensible Heat Recovered</td>
-                    <td className="display-val">{fmtVal(R.qCondenserSensible * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val">{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Latent Heat Recovered</td>
-                    <td className="display-val">{fmtVal(R.qCondenserLatent * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val">{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontWeight: 'bold' }}>Total Heat Recovered</td>
-                    <td className="display-val" style={{ fontWeight: 'bold' }}>{fmtVal(R.qCondenser * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val" style={{ fontWeight: 'bold' }}>{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontWeight: S.condenserInputMode === 'dtmin' ? 'bold' : 'normal' }}>
-                      Pinch (deltaTmin) {S.condenserInputMode === 'dtmin' ? '★' : ''}
-                    </td>
-                    <td className="editable-cell">
-                      <ClampedNumericInput
-                         step="0.5"
-                         min={0.1}
-                         max={50}
-                         defaultValue={5.0}
-                         value={Number(R.condPinch.toFixed(1))}
-                         onChange={(v) => {
-                           setS(prev => ({
-                             ...prev,
-                             condenserDTmin: v,
-                             condenserInputMode: 'dtmin'
-                           }));
-                         }}
-                       />
-                    </td>
-                    <td className="display-val">K</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontWeight: S.condenserInputMode === 't14' ? 'bold' : 'normal' }}>
-                      Stack Exit Temp {S.condenserInputMode === 't14' ? '★' : ''}
-                    </td>
-                    <td className="editable-cell">
-                      <ClampedNumericInput
-                         step="1"
-                         min={15}
-                         max={150}
-                         defaultValue={35.0}
-                         value={Number(R.ecoFlueTempOutClamped.toFixed(1))}
-                         onChange={(v) => {
-                           setS(prev => ({
-                             ...prev,
-                             condenserT14: v,
-                             condenserInputMode: 't14'
-                           }));
-                         }}
-                       />
-                    </td>
-                    <td className="display-val">°C</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>LMTD</td>
-                    <td className="display-val" colSpan={2}>
-                      {typeof R.condLMTD === 'number' ? `${R.condLMTD.toFixed(1)} K` : R.condLMTD}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>UA</td>
-                    <td className="display-val" colSpan={2}>
-                      {typeof R.condUA === 'number' ? `${R.condUA.toFixed(3)} kW/K` : R.condUA}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontSize: '0.75rem', color: 'var(--accent-orange)' }}>Binding Pinch Point</td>
-                    <td className="display-val" colSpan={2} style={{ fontSize: '0.75rem', color: 'var(--accent-orange)', fontWeight: 'bold', textAlign: 'right' }}>
-                      {R.condenserBindingConstraint}
-                    </td>
-                  </tr>
+                      <tr>
+                        <td colSpan={3} className="section-title">Condenser Data</td>
+                      </tr>
+                      <tr>
+                        <td style={{ textAlign: 'left' }}>Flue Dew Point</td>
+                        <td className="display-val">{R.tDew.toFixed(1)}</td>
+                        <td className="display-val">°C</td>
+                      </tr>
+                      <tr>
+                        <td style={{ textAlign: 'left' }}>Water Condensed</td>
+                        <td className="display-val">{fmtVal(R.mCondensateWater * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
+                        <td className="display-val">{timeUnitMode === 'yearly' ? 't' : 'kg/h'}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ textAlign: 'left' }}>Latent Heat Recovered</td>
+                        <td className="display-val">{fmtVal(R.qCondenserLatent * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
+                        <td className="display-val">{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</td>
+                      </tr>
                     </>
                   )}
 
@@ -1471,25 +1184,6 @@ return {
                   </tr>
                   {S.pinchEnabled && (
                     <>
-                      <tr>
-                        <td style={{ textAlign: 'left' }}>Pinch (deltaTmin)</td>
-                        <td className="editable-cell">
-                          <ClampedNumericInput
-                            step="0.5"
-                            min={0.1}
-                            max={50}
-                            defaultValue={10.0}
-                            value={S.pinchDTmin}
-                            onChange={(v) => {
-                              setS(prev => ({
-                                ...prev,
-                                pinchDTmin: v
-                              }));
-                            }}
-                          />
-                        </td>
-                        <td className="display-val">K</td>
-                      </tr>
                       <tr>
                         <td style={{ textAlign: 'left' }}>Exchanged Power</td>
                         <td className="display-val">{R.pinchHeat.toFixed(1)}</td>
@@ -1627,7 +1321,7 @@ return {
             )}
             
             {/* Blowdown Heat Recovery */}
-            <hr style={{ margin: '0.4rem 0', borderColor: 'rgba(255,255,255,0.08)' }} />
+            <hr style={{ margin: '1rem 0', borderColor: 'rgba(255,255,255,0.08)' }} />
             <div className="form-row">
               <label>Blowdown Heat Recovery</label>
               <div className="toggle-group">
@@ -2108,27 +1802,18 @@ return {
         </div>
         <div className="efficiency-badges">
           <div className="eff-badge-card">
-            <span className="eff-badge-label" style={{ textTransform: 'none' }}>η_Boiler {S.gasInputMode.toUpperCase()}</span>
+            <span className="eff-badge-label">Combustion η</span>
+            <span className="eff-badge-value">{fmtVal(R.combustEff, 1)}%</span>
+          </div>
+          <div className="eff-badge-card">
+            <span className="eff-badge-label">Boiler η (LHV)</span>
             <span className="eff-badge-value">{fmtVal(R.boilerEff, 1)}%</span>
           </div>
-          <div className="eff-badge-group">
-            <div className="eff-group-title" style={{ textTransform: 'none' }}>η_boilerhouse {S.gasInputMode.toUpperCase()}</div>
-            <div className="eff-group-badges">
-              <div className="eff-badge-card">
-                <span className="eff-badge-label">Upper bound</span>
-                <span className={`eff-badge-value ${R.bhEffUpper < 75 ? 'danger' : R.bhEffUpper < 82 ? 'warn' : ''}`}>
-                  {fmtVal(R.bhEffUpper, 1)}%
-                </span>
-                <span className="eff-badge-note">@ {S.refTemp.toFixed(0)} °C Tref</span>
-              </div>
-              <div className="eff-badge-card">
-                <span className="eff-badge-label">Lower bound</span>
-                <span className={`eff-badge-value ${R.bhEffLower < 75 ? 'danger' : R.bhEffLower < 82 ? 'warn' : ''}`}>
-                  {fmtVal(R.bhEffLower, 1)}%
-                </span>
-                <span className="eff-badge-note">@ {Math.max(S.condReturnTemp, R.tDaea).toFixed(0)} °C Tref</span>
-              </div>
-            </div>
+          <div className="eff-badge-card">
+            <span className="eff-badge-label">Boilerhouse η (HHV)</span>
+            <span className={`eff-badge-value ${R.bhEff < 75 ? 'danger' : R.bhEff < 82 ? 'warn' : ''}`}>
+              {fmtVal(R.bhEff, 1)}%
+            </span>
           </div>
         </div>
       </header>
@@ -2137,55 +1822,53 @@ return {
         {/* Left side SVG area */}
         <section className="diagram-area">
           <div className="diagram-card">
-            <BoilerhouseSVG
+                        <BoilerhouseSVG
+              isDarkMode={isDarkMode}
               isAnimationEnabled={isAnimationEnabled}
-              ecoEnabled={S.ecoEnabled}
-              pinchEnabled={S.pinchEnabled}
-              ecoCondensingEnabled={S.ecoCondensingEnabled}
-              bdRecoveryEnabled={S.bdRecoveryEnabled}
-              makeupFlow={R.makeupFlow}
-              makeupConductivity={S.makeupConductivity}
-              makeupTemp={S.makeupTemp}
-              tMakeupCondenserOut={R.tMakeupCondenserOut}
-              tMuInBd={R.tMuInBd}
-              tMakeupEffective={R.tMakeupEffective}
-              daeaPressure={S.daeaPressure}
-              tDaea={R.tDaea}
-              daeaConductivity={Math.round(R.fwConductivity)}
-              condFlow={R.condFlow}
-              condPct={R.condPct}
-              condReturnTemp={S.condReturnTemp}
-              condConductivity={S.condConductivity}
-              fwFlow={R.fwFlow}
-              tFWEffective={R.tFWEffective}
-              tFW={R.tFW}
-              bdFlowKgH={R.mBlowdown}
-              bdFlow={R.x_bd}
-              boilerConductivity={R.boilerConductivity}
-              mFlash={R.mFlash}
-              drumPressure={S.drumPressure}
-              tSat={R.tSat}
-              boilerSteamFlow={R.boilerSteamFlow}
-              peggingSteamFlow={R.peggingSteamFlow}
-              steamFlow={R.usersSteamFlow}
-              Q_users_kW={R.Q_export_net}
+              timeUnitMode={timeUnitMode}
+              gasFlowRate={R.gasFlowRate}
               gasInputMode={S.gasInputMode}
+              gasLHV={S.gasLHV}
+              gasHHV={S.gasHHV}
               gasPowerLHV={R.gasPowerLHV}
               gasPowerHHV={R.gasPowerHHV}
-              energyUnit={timeUnitMode === 'yearly' ? 'MWh' : 'kW'}
-              gasFlowRate={R.gasFlowRate}
               airTempIn={S.airTempIn}
               o2Flue={S.o2Flue}
               flueGasTemp={S.flueGasTemp}
-              ecoFlueTempOut={R.ecoFlueTempOut}
-              ecoFlueTempOutClamped={R.ecoFlueTempOutClamped}
-              condenserT14={S.condenserT14}
+              flueTempEff={R.flueTempEff}
+              drumPressure={S.drumPressure}
+              boilerConductivity={R.boilerConductivity}
+              bdFlow={R.x_bd}
+              bdFlowKgH={R.mBlowdown}
+              makeupFlow={R.makeupFlow}
+              makeupConductivity={S.makeupConductivity}
+              fwFlow={R.fwFlow}
+              tFW={R.tFW}
+              steamFlow={R.usersSteamFlow}
+              condFlow={R.condFlow}
+              mFlash={R.mFlash}
+              mCondensateWater={R.mCondensateWater}
+              Q_users_kW={R.Q_export_net}
+              condPct={R.condPct}
+              condReturnTemp={S.condReturnTemp}
+              condConductivity={S.condConductivity}
+              peggingSteamFlow={R.peggingSteamFlow}
+              ecoEnabled={S.ecoEnabled}
               ecoHeat={R.ecoHeat}
+              ecoFlueTempOut={R.ecoFlueTempOutClamped}
+              ecoFlueTempOutClamped={R.ecoFlueTempOutClamped}
+              ecoCondensingEnabled={S.ecoCondensingEnabled}
               qCondenser={R.qCondenser}
-              mult={timeUnitMode === 'yearly' ? 8.76 : 1.0}
-              fmtDiagVal={(val: number, decimals: number = 0) => (isNaN(val) || val === undefined) ? '-' : val.toFixed(decimals)}
-              onLabelClick={(tag: string, e?: React.MouseEvent) => handleOpenPopup(tag, e)}
-              onValueChange={handleValueChange}
+              bdRecoveryEnabled={S.bdRecoveryEnabled}
+              daeaPressure={S.daeaPressure}
+              daeaConductivity={Math.round(R.fwConductivity)}
+              tSat={R.tSat}
+              tDaea={R.tDaea}
+              excessAir={R.excessAir}
+              pinchEnabled={S.pinchEnabled}
+              boilerSteamFlow={R.boilerSteamFlow}
+              onOpenPopup={handleOpenPopup}
+              onActivateFeature={(key) => setS(prev => ({ ...prev, [key]: true }))}
             />
             {/* Collapsible legend overlay */}
             <div className={`legend-overlay ${isLegendOpen ? 'open' : ''}`}>

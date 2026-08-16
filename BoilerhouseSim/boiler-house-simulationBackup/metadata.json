@@ -1,0 +1,6 @@
+{
+  "name": "Boiler House Sim",
+  "description": "An interactive utility balance simulator. Tweak fuel-air settings, economizer, condensate return, blowdown, and deaerator pressure to calculate combustion and system efficiency.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
