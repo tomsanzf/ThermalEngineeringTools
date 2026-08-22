@@ -1091,6 +1091,8 @@ return {
       } else if (key === 'condenserT14') {
         next.condenserT14 = value;
         next.condenserInputMode = 't14';
+      } else if (key === 'boilerConductivity') {
+        next.boilerConductivity = Math.max(prev.makeupConductivity + 10, value);
       } else {
         // @ts-ignore
         next[key] = value;
