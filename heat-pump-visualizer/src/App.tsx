@@ -471,7 +471,7 @@ export default function App() {
               Armstrong International
             </div>
             <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#f1f5f9", letterSpacing: "-0.02em" }}>
-              Heat Pump Visualizer
+              Heat Pump Control Visualizer
             </h1>
           </div>
         </div>

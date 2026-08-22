@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { BoilerhouseSVG } from './components/BoilerhouseSVG';
-interface ClampedNumericInputProps {
+import { HXProfileModal } from './components/HXProfileModal';
+export interface ClampedNumericInputProps {
   value: number;
   onChange: (val: number) => void;
   min?: number;
@@ -9,7 +10,7 @@ interface ClampedNumericInputProps {
   defaultValue?: number;
   disabled?: boolean;
 }
-const ClampedNumericInput: React.FC<ClampedNumericInputProps> = ({
+export const ClampedNumericInput: React.FC<ClampedNumericInputProps> = ({
   value,
   onChange,
   min,
@@ -149,6 +150,7 @@ interface SimulationState {
   condenserT14: number;
   condenserInputMode: 'dtmin' | 't14';
   pinchDTmin: number;
+  airRH: number;
 }
 const DEFAULT_STATE: SimulationState = {
   gasFlowRate: 72.57,
@@ -193,12 +195,17 @@ const DEFAULT_STATE: SimulationState = {
   condenserT14: 35.0,
   condenserInputMode: 'dtmin',
   pinchDTmin: 10.0,
+  airRH: 50.0,
 };
 export default function App() {
   const [S, setS] = useState<SimulationState>(DEFAULT_STATE);
-  const [popupKey, setPopupKey] = useState<string | null>(null);
-  const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
+
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState<boolean>(true);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState<boolean>(true);
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({ general: true });
+  const [highlightedSection, setHighlightedSection] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  const [isHXProfileOpen, setIsHXProfileOpen] = useState<boolean>(false);
   const [isAnimationEnabled, setIsAnimationEnabled] = useState<boolean>(true);
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(false);
   const [leadingVariable, setLeadingVariable] = useState<'gas' | 'steam'>('steam');
@@ -219,12 +226,23 @@ export default function App() {
     const hCond = enthalpyLiquid(S.condReturnTemp);
     const radLossPct = S.radLossPct;
 
-    // Stoichiometric water vapor & dew point calculations
+    // Stoichiometric water vapor & dew point calculations with combustion air temperature and relative humidity (RH)
     const excessAir = excessAirFromO2(S.o2Flue);
     const e_air = excessAir / 100;
-    const yH2O_in = 2.0 / (10.52 + 9.52 * e_air);
-    const pH2O_in = yH2O_in * 1.01325; // bar
-    const tDew = pH2O_in > 0 ? (243.5 * Math.log(pH2O_in / 0.006112)) / (17.67 - Math.log(pH2O_in / 0.006112)) : 0;
+    
+    // Saturation vapor pressure of water at combustion air inlet temperature
+    const pSatAir = 0.0061121 * Math.exp((17.67 * S.airTempIn) / (S.airTempIn + 243.5)); // bar
+    const pW_air = (S.airRH / 100) * pSatAir; // bar
+    const xW_air = pW_air / Math.max(0.01, 1.01325 - pW_air); // moles water vapor per mole dry air
+    
+    const nH2O_air = 9.52 * (1 + e_air) * xW_air;
+    const nH2O_total = 2.0 + nH2O_air;
+    const nDryFlue = 8.52 + e_air * 9.52;
+    const nWetFlue = nDryFlue + nH2O_total;
+    
+    const yH2O_flue = nH2O_total / nWetFlue;
+    const pH2O_flue = yH2O_flue * 1.01325; // bar
+    const tDew = pH2O_flue > 0 ? (243.5 * Math.log(pH2O_flue / 0.0061121)) / (17.67 - Math.log(pH2O_flue / 0.0061121)) : 0;
 
     const solveBoilerHouse = (_pinchActive: boolean, fixedUA?: number) => {
       console.groupCollapsed(`Solver Run: ${_pinchActive ? "Pinch Active" : "Base Case"}`);
@@ -413,7 +431,7 @@ export default function App() {
         } else {
           ecoHeat_local = 0;
           tFW_out_local = tWaterIn_local;
-          ecoFlueTempOutClamped_local = S.ecoFlueTempOutManual;
+          ecoFlueTempOutClamped_local = S.flueGasTemp;
           ecoLMTD_local = 0;
           ecoUA_local = 0;
         }
@@ -422,18 +440,17 @@ export default function App() {
         if (S.ecoEnabled && S.ecoCondensingEnabled) {
           const tFlueInCond = ecoFlueTempOutClamped_local; // T13
           const tWaterInCond = S.makeupTemp;
-          const tDew = 55.2; // natural gas dew point
-          
           // Flow heat capacities
           const C_water = (makeupFlow_local * 4.187) / 3600; // kW/K
           
-          // Moist-air property functions
+          // Moist-air property functions using the dynamic flue gas water vapor fraction (yH2O_flue)
           const getHumidityRatio = (T: number) => {
             if (T >= tDew) {
-              return 0.622 * 0.12 / (1.0 - 0.12); // inlet humidity ratio w_in = 0.084818
+              return 0.622 * yH2O_flue / (1.0 - yH2O_flue);
             }
-            const y_sat = 0.02 + 0.00286 * (T - 20);
-            const y = Math.max(0, Math.min(0.12, y_sat));
+            const pSat = 0.0061121 * Math.exp((17.67 * T) / (T + 243.5)); // bar
+            const y_sat = pSat / 1.01325;
+            const y = Math.max(0, Math.min(yH2O_flue, y_sat));
             return 0.622 * y / (1.0 - y);
           };
           
@@ -810,6 +827,7 @@ return {
     const ecoHeat = result.ecoHeat;
     const ecoDt = result.ecoDt;
     const ecoLMTD = result.ecoLMTD;
+    const ecoUA = result.ecoUA;
     const tFW_out = result.tFW_out;
     const qCondenser = result.qCondenser;
     const qCondenserSensible = result.qCondenserSensible;
@@ -874,7 +892,54 @@ return {
         : 9999;
     }
 
-    // Redundant outer calculations removed (now computed inside solver loop)
+    // Calculate Condenser HX Profile
+    let hxProfile: { pct: number; tHot: number; tCold: number; }[] = [];
+    if (S.ecoEnabled && S.ecoCondensingEnabled && result.qCondenser > 0) {
+      const tFlueIn = result.ecoFlueTempOut;
+      const tFlueOut = result.ecoFlueTempOutClamped;
+      const tWaterIn = S.makeupTemp;
+      const tWaterOut = result.tMakeupCondenserOut;
+      const Q_total = result.qCondenser;
+      
+      const excessAirRatio = excessAirFromO2(S.o2Flue) / 100;
+      const pSatAir = 0.0061121 * Math.exp((17.67 * S.airTempIn) / (S.airTempIn + 243.5));
+      const xAir = (S.airRH / 100 * pSatAir) / (1.01325 - (S.airRH / 100 * pSatAir));
+      const nH2O = 2.0 + 9.52 * (1 + excessAirRatio) * xAir;
+      const nDry = 8.52 + 9.52 * excessAirRatio;
+      const yH2O_flue = nH2O / (nDry + nH2O);
+      
+      const getHumidityRatio = (T: number) => {
+        if (T >= tDew) {
+          return 0.622 * yH2O_flue / (1.0 - yH2O_flue);
+        }
+        const pSat = 0.0061121 * Math.exp((17.67 * T) / (T + 243.5));
+        const y_sat = pSat / 1.01325;
+        const y = Math.max(0, Math.min(yH2O_flue, y_sat));
+        return 0.622 * y / (1.0 - y);
+      };
+      
+      const getMoistEnthalpy = (T: number) => {
+        const w = getHumidityRatio(T);
+        return 1.006 * T + w * (2501 + 1.86 * T);
+      };
+      
+      const mFlueGas_kg_h = result.gasFlowRate * 10.5;
+      const w_in = getHumidityRatio(tFlueIn);
+      const mFlueDry = mFlueGas_kg_h / (1.0 + w_in);
+      
+      const h_in = getMoistEnthalpy(tFlueIn);
+      
+      for (let i = 0; i <= 50; i++) {
+        const tHot = tFlueIn - (i / 50) * (tFlueIn - tFlueOut);
+        const h_out = getMoistEnthalpy(tHot);
+        const q_released = (mFlueDry * (h_in - h_out)) / 3600;
+        const pct = Q_total > 0 ? Math.min(100, Math.max(0, (q_released / Q_total) * 100)) : 0;
+        const tCold = tWaterOut - (pct / 100) * (tWaterOut - tWaterIn);
+        hxProfile.push({ pct, tHot, tCold });
+      }
+      
+      hxProfile.sort((a, b) => a.pct - b.pct);
+    }
 
     return {
       tSat,
@@ -902,6 +967,7 @@ return {
       ecoHeat,
       ecoDt,
       ecoLMTD,
+      ecoUA,
       ecoFlueTempOut,
       ecoFlueTempOutClamped,
       tFW,
@@ -938,7 +1004,8 @@ return {
       condPinch,
       condLMTD,
       condUA,
-      condenserBindingConstraint
+      condenserBindingConstraint,
+      hxProfile
     };
   }, [S, leadingVariable]);
   const handleExportState = () => {
@@ -999,31 +1066,7 @@ return {
     };
   };
 
-  // Click handlers
-  const handleOpenPopup = (key: string, _e?: React.MouseEvent) => {
-    if (key === 'addEconomizer') {
-      setS(prev => ({ ...prev, ecoEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    if (key === 'addCondenser') {
-      setS(prev => ({ ...prev, ecoCondensingEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    if (key === 'addBDHR') {
-      setS(prev => ({ ...prev, bdRecoveryEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    if (key === 'addPinchHX') {
-      setS(prev => ({ ...prev, pinchEnabled: true }));
-      setPopupKey(null);
-      return;
-    }
-    setPopupPos({ x: 20, y: 20 });
-    setPopupKey(key);
-  };
+
   const handleValueChange = (key: string, value: number) => {
     setS(prev => {
       const next = { ...prev };
@@ -1204,430 +1247,9 @@ return {
           </>
         );
       }
-      case 'airTempIn':
-        return (
-          <div className="form-row">
-            <label>Fresh Air Temperature</label>
-            <div className="input-with-unit">
-              <ClampedNumericInput 
-                min={-40}
-                max={60}
-                defaultValue={20}
-                value={S.airTempIn}
-                onChange={(v) => {
-                  setS(prev => ({ ...prev, airTempIn: v }));
-                }}
-              />
-              <span className="form-unit">°C</span>
-            </div>
-          </div>
-        );
-      case 'economizerFlue': {
-        // Calculate Pinch HX effectiveness, LMTD, and UA for display in the popup
-        let pinchEffectivenessPct = 0;
-        let pinchLMTD = 0;
-        let pinchUA = 0;
-        if (S.pinchEnabled && S.ecoEnabled && R.pinchHeat > 0) {
-          const C_min_pinch = R.makeupFlow * 4.186 / 3600;
-          const Q_max_pinch = C_min_pinch * (R.tDaea - S.makeupTemp);
-          if (Q_max_pinch > 0) {
-            pinchEffectivenessPct = Math.min(100, Math.max(0, (R.pinchHeat / Q_max_pinch) * 100));
-          }
-
-          const dT1 = R.tDaea - R.tMakeupEffective;
-          const dT2 = R.tFWEffective - S.makeupTemp;
-          if (dT1 > 0 && dT2 > 0) {
-            if (Math.abs(dT1 - dT2) < 0.1) {
-              pinchLMTD = dT1;
-            } else {
-              pinchLMTD = (dT1 - dT2) / Math.log(dT1 / dT2);
-            }
-            pinchUA = pinchLMTD > 0 ? (R.pinchHeat / pinchLMTD) : 0;
-          }
-        }
-
-        return (
-          <table className="popup-table">
-            <tbody>
-
-              <tr>
-                <td style={{ width: '45%', textAlign: 'left' }}>Flue Gas O₂</td>
-                <td style={{ width: '35%' }} className="editable-cell">
-                  <ClampedNumericInput 
-                    step="0.1"
-                    min={0.5}
-                    max={15}
-                    defaultValue={3.5}
-                    value={S.o2Flue}
-                    onChange={(v) => {
-                      setS(prev => ({ ...prev, o2Flue: v }));
-                    }}
-                  />
-                </td>
-                <td style={{ width: '20%' }} className="display-val">%vol</td>
-              </tr>
-              <tr>
-                <td style={{ textAlign: 'left' }}>Economizer</td>
-                <td colSpan={2}>
-                  <div className="toggle-group table-toggle">
-                    <button 
-                      className={`toggle-btn ${S.ecoEnabled ? 'active' : ''}`}
-                      onClick={() => setS(prev => ({ ...prev, ecoEnabled: true }))}
-                    >
-                      Active
-                    </button>
-                    <button 
-                      className={`toggle-btn ${!S.ecoEnabled ? 'active' : ''}`}
-                      onClick={() => setS(prev => ({ ...prev, ecoEnabled: false, pinchEnabled: false }))}
-                    >
-                      Disabled
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              {S.ecoEnabled && (
-                <tr>
-                  <td style={{ textAlign: 'left' }}>Condensing Mode</td>
-                  <td colSpan={2}>
-                    <div className="toggle-group table-toggle">
-                      <button
-                        className={`toggle-btn ${S.ecoCondensingEnabled ? 'active' : ''}`}
-                        onClick={() => setS(prev => ({ ...prev, ecoCondensingEnabled: true }))}
-                      >
-                        Active
-                      </button>
-                      <button
-                        className={`toggle-btn ${!S.ecoCondensingEnabled ? 'active' : ''}`}
-                        onClick={() => setS(prev => ({ ...prev, ecoCondensingEnabled: false }))}
-                      >
-                        Disabled
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )}
-
-              {!S.ecoEnabled && (
-                <>
-                  <tr>
-                    <td colSpan={3} className="section-title">Flue Gas Temperature</td>
-                  </tr>
-                  <tr>
-                    <td style={{ width: '45%', textAlign: 'left' }}>Boiler Outlet Temp</td>
-                    <td style={{ width: '35%' }}>
-                      <ClampedNumericInput
-                        step="5"
-                        min={100}
-                        max={400}
-                        defaultValue={180}
-                        value={S.flueGasTemp}
-                        onChange={(v) => {
-                          setS(prev => ({ ...prev, flueGasTemp: v }));
-                        }}
-                      />
-                    </td>
-                    <td style={{ width: '20%' }} className="display-val">°C</td>
-                  </tr>
-                </>
-              )}
-
-              {S.ecoEnabled && (
-                <>
-                  {S.ecoCondensingEnabled && (
-                    <>
-                  <tr>
-                    <td colSpan={3} className="section-title">Condenser Data</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Flue Dew Point</td>
-                    <td className="display-val">{R.tDew.toFixed(1)}</td>
-                    <td className="display-val">°C</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Water Condensed</td>
-                    <td className="display-val">{fmtVal(R.mCondensateWater * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val">{timeUnitMode === 'yearly' ? 't' : 'kg/h'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Sensible Heat Recovered</td>
-                    <td className="display-val">{fmtVal(R.qCondenserSensible * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val">{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Latent Heat Recovered</td>
-                    <td className="display-val">{fmtVal(R.qCondenserLatent * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val">{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontWeight: 'bold' }}>Total Heat Recovered</td>
-                    <td className="display-val" style={{ fontWeight: 'bold' }}>{fmtVal(R.qCondenser * (timeUnitMode === 'yearly' ? 8.76 : 1.0), timeUnitMode === 'yearly' ? 1 : 0)}</td>
-                    <td className="display-val" style={{ fontWeight: 'bold' }}>{timeUnitMode === 'yearly' ? 'MWh' : 'kW'}</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontWeight: S.condenserInputMode === 'dtmin' ? 'bold' : 'normal' }}>
-                      Pinch (deltaTmin) {S.condenserInputMode === 'dtmin' ? '★' : ''}
-                    </td>
-                    <td className="editable-cell">
-                      <ClampedNumericInput
-                         step="0.5"
-                         min={0.1}
-                         max={50}
-                         defaultValue={5.0}
-                         value={Number(R.condPinch.toFixed(1))}
-                         onChange={(v) => {
-                           setS(prev => ({
-                             ...prev,
-                             condenserDTmin: v,
-                             condenserInputMode: 'dtmin'
-                           }));
-                         }}
-                       />
-                    </td>
-                    <td className="display-val">K</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontWeight: S.condenserInputMode === 't14' ? 'bold' : 'normal' }}>
-                      Stack Exit Temp {S.condenserInputMode === 't14' ? '★' : ''}
-                    </td>
-                    <td className="editable-cell">
-                      <ClampedNumericInput
-                         step="1"
-                         min={15}
-                         max={150}
-                         defaultValue={35.0}
-                         value={Number(R.ecoFlueTempOutClamped.toFixed(1))}
-                         onChange={(v) => {
-                           setS(prev => ({
-                             ...prev,
-                             condenserT14: v,
-                             condenserInputMode: 't14'
-                           }));
-                         }}
-                       />
-                    </td>
-                    <td className="display-val">°C</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>LMTD</td>
-                    <td className="display-val" colSpan={2}>
-                      {typeof R.condLMTD === 'number' ? `${R.condLMTD.toFixed(1)} K` : R.condLMTD}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>UA</td>
-                    <td className="display-val" colSpan={2}>
-                      {typeof R.condUA === 'number' ? `${R.condUA.toFixed(3)} kW/K` : R.condUA}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left', fontSize: '0.75rem', color: 'var(--accent-orange)' }}>Binding Pinch Point</td>
-                    <td className="display-val" colSpan={2} style={{ fontSize: '0.75rem', color: 'var(--accent-orange)', fontWeight: 'bold', textAlign: 'right' }}>
-                      {R.condenserBindingConstraint}
-                    </td>
-                  </tr>
-                    </>
-                  )}
-
-                  {/* SECTION 4: Economizer Data */}
-                  <tr>
-                    <td colSpan={3} className="section-title">Economizer Data</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Power Recovered</td>
-                    <td className="display-val">{R.ecoHeat.toFixed(1)}</td>
-                    <td className="display-val">kW</td>
-                  </tr>
-                  <tr>
-                    <td style={{ fontWeight: '500' }}>LMTD</td>
-                    <td style={{ fontWeight: '500' }} colSpan={2}>UA</td>
-                  </tr>
-                  <tr>
-                    <td className="display-val">{R.ecoLMTD > 0 ? `${R.ecoLMTD.toFixed(1)} K` : 'N/A'}</td>
-                    <td colSpan={2} className="display-val">{R.ecoUA_design > 0 ? `${R.ecoUA_design.toFixed(3)} kW/K` : 'N/A'}</td>
-                  </tr>
-
-                  {/* SECTION 5: Pinch HX Data */}
-                  <tr>
-                    <td colSpan={3} className="section-title">Pinch HX Data</td>
-                  </tr>
-                  <tr>
-                    <td style={{ textAlign: 'left' }}>Pinch HX</td>
-                    <td colSpan={2}>
-                      <div className="toggle-group table-toggle">
-                        <button
-                          className={`toggle-btn ${S.pinchEnabled ? 'active' : ''}`}
-                          onClick={() => setS(prev => ({ ...prev, pinchEnabled: true }))}
-                        >
-                          Active
-                        </button>
-                        <button
-                          className={`toggle-btn ${!S.pinchEnabled ? 'active' : ''}`}
-                          onClick={() => setS(prev => ({ ...prev, pinchEnabled: false }))}
-                        >
-                          Disabled
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  {S.pinchEnabled && (
-                    <>
-                      <tr>
-                        <td style={{ textAlign: 'left' }}>Pinch (deltaTmin)</td>
-                        <td className="editable-cell">
-                          <ClampedNumericInput
-                            step="0.5"
-                            min={0.1}
-                            max={50}
-                            defaultValue={10.0}
-                            value={S.pinchDTmin}
-                            onChange={(v) => {
-                              setS(prev => ({
-                                ...prev,
-                                pinchDTmin: v
-                              }));
-                            }}
-                          />
-                        </td>
-                        <td className="display-val">K</td>
-                      </tr>
-                      <tr>
-                        <td style={{ textAlign: 'left' }}>Exchanged Power</td>
-                        <td className="display-val">{R.pinchHeat.toFixed(1)}</td>
-                        <td className="display-val">kW</td>
-                      </tr>
-                      <tr>
-                        <td style={{ textAlign: 'left' }}>Effectiveness</td>
-                        <td className="display-val">{pinchEffectivenessPct.toFixed(0)}</td>
-                        <td className="display-val">%</td>
-                      </tr>
-                      <tr>
-                        <td style={{ fontWeight: '500' }}>LMTD</td>
-                        <td style={{ fontWeight: '500' }} colSpan={2}>UA</td>
-                      </tr>
-                      <tr>
-                        <td className="display-val">{pinchLMTD > 0 ? `${pinchLMTD.toFixed(1)} K` : 'N/A'}</td>
-                        <td colSpan={2} className="display-val">{pinchUA > 0 ? `${pinchUA.toFixed(3)} kW/K` : 'N/A'}</td>
-                      </tr>
-                    </>
-                  )}
-                </>
-              )}
-            </tbody>
-          </table>
-        );
-      }
-      case 'drumPressure':
-        return (
-          <div className="form-row">
-            <label>Steam Drum Pressure</label>
-            <div className="input-with-unit">
-              <ClampedNumericInput 
-                step="0.2"
-                min={0.2}
-                max={40}
-                defaultValue={10}
-                value={S.drumPressure}
-                onChange={(v) => {
-                  setS(prev => ({ ...prev, drumPressure: v }));
-                }}
-              />
-              <span className="form-unit">bar(g)</span>
-            </div>
-          </div>
-        );
-      case 'bdFlow':
-      case 'boilerConductivity':
+      case 'bdhr':
         return (
           <>
-            <div className="form-row">
-              <label>Control Mode</label>
-              <div className="toggle-group">
-                <button 
-                  className={`toggle-btn ${S.bdMode === 'auto' ? 'active' : ''}`}
-                  onClick={() => {
-                    setS(prev => ({ ...prev, bdMode: 'auto' }));
-                  }}
-                >
-                  Auto
-                </button>
-                <button 
-                  className={`toggle-btn ${S.bdMode === 'manual' ? 'active' : ''}`}
-                  onClick={() => {
-                    setS(prev => ({ ...prev, bdMode: 'manual' }));
-                  }}
-                >
-                  Manual
-                </button>
-              </div>
-            </div>
-            {S.bdMode === 'auto' ? (
-              <>
-                <div className="form-row">
-                  <label>Conductivity Setpoint</label>
-                  <div className="input-with-unit">
-                    <ClampedNumericInput 
-                      step={100}
-                      min={500}
-                      max={5000}
-                      defaultValue={2000}
-                      value={S.boilerConductivity}
-                      onChange={(v) => {
-                        setS(prev => ({ ...prev, boilerConductivity: v }));
-                      }}
-                    />
-                    <span className="form-unit">µS/cm</span>
-                  </div>
-                </div>
-                <div className="form-row">
-                  <label>Calculated Blowdown</label>
-                  <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text)', padding: '0.2rem 0' }}>
-                    {R.mBlowdown >= R.usersSteamFlow * 0.249 ? (
-                      <span style={{ color: '#ef4444', fontWeight: 'bold' }}>
-                        25.0% (CAPPED)
-                      </span>
-                    ) : (
-                      `${fmtVal(R.x_bd, 1)}% (${fmtVal(R.mBlowdown, 0)} kg/h)`
-                    )}
-                  </div>
-                </div>
-                {R.mBlowdown >= R.usersSteamFlow * 0.249 && (
-                  <div className="form-row">
-                    <label>Actual Conductivity</label>
-                    <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#ef4444', fontWeight: 'bold', padding: '0.2rem 0' }}>
-                      {fmtVal(R.boilerConductivity, 0)} µS/cm
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="form-row">
-                  <label>Blowdown Rate</label>
-                  <div className="input-with-unit">
-                    <ClampedNumericInput 
-                      step={0.1}
-                      min={0.1}
-                      max={25}
-                      defaultValue={0.5}
-                      value={S.bdFlowManual}
-                      onChange={(v) => {
-                        setS(prev => ({ ...prev, bdFlowManual: v }));
-                      }}
-                    />
-                    <span className="form-unit">% steam</span>
-                  </div>
-                </div>
-                <div className="form-row">
-                  <label>Calculated Conductivity</label>
-                  <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text)', padding: '0.2rem 0' }}>
-                    {R.boilerConductivity > 9000 ? '∞ (Accumulating)' : `${fmtVal(R.boilerConductivity, 0)} µS/cm`}
-                  </div>
-                </div>
-              </>
-            )}
-            
-            {/* Blowdown Heat Recovery */}
-            <hr style={{ margin: '0.4rem 0', borderColor: 'rgba(255,255,255,0.08)' }} />
             <div className="form-row">
               <label>Blowdown Heat Recovery</label>
               <div className="toggle-group">
@@ -1674,12 +1296,12 @@ return {
                   </div>
                 </div>
                 
-                {/* BDHR HX Temperature Table */}
+                {/* Temperature table */}
                 <table style={{
                   width: '100%',
                   borderCollapse: 'collapse',
-                  marginTop: '0.75rem',
-                  fontSize: '0.8rem',
+                  marginTop: '0.5rem',
+                  fontSize: '0.75rem',
                   backgroundColor: 'rgba(255,255,255,0.02)',
                   border: '1px solid rgba(255,255,255,0.05)',
                   borderRadius: '4px'
@@ -1694,13 +1316,13 @@ return {
                   <tbody>
                     <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                       <td style={{ padding: '0.35rem 0.5rem', color: 'var(--blowdown)' }}>Blowdown</td>
-                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tBdIn, 1)} °C</td>
-                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tBdOut, 1)} °C</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{R.tBdIn.toFixed(1)} °C</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{R.tBdOut.toFixed(1)} °C</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: '0.35rem 0.5rem', color: 'var(--water)' }}>Makeup Water</td>
-                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tMuInBd, 1)} °C</td>
-                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtVal(R.tMuOutBd, 1)} °C</td>
+                      <td style={{ padding: '0.35rem 0.5rem', color: 'var(--water)' }}>Makeup</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{R.tMuInBd.toFixed(1)} °C</td>
+                      <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{R.tMuOutBd.toFixed(1)} °C</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1708,231 +1330,500 @@ return {
             )}
           </>
         );
-      case 'makeupFlow': {
-        const mult = timeUnitMode === 'yearly' ? 8.76 : 1.0;
-        const valueToShow = Math.round((S.waterInputMode === 'makeup' ? S.makeupFlowManual : R.makeupFlow) * mult);
+      case 'flueGases':
         return (
           <>
             <div className="form-row">
-              <label>{timeUnitMode === 'yearly' ? 'Yearly Makeup Water Flow' : 'Makeup Water Flow'}</label>
+              <label>Flue Gas O₂</label>
               <div className="input-with-unit">
                 <ClampedNumericInput 
-                  min={0}
-                  max={timeUnitMode === 'yearly' ? 87600 : 10000}
-                  step={timeUnitMode === 'yearly' ? 500 : 50}
-                  defaultValue={timeUnitMode === 'yearly' ? 2628 : 300}
-                  value={valueToShow}
-                  onChange={(v) => setS(prev => ({ ...prev, waterInputMode: 'makeup', makeupFlowManual: v / mult, daeaCondMode: 'auto' }))}
+                  step="0.1"
+                  min={0.5}
+                  max={15}
+                  defaultValue={3.5}
+                  value={S.o2Flue}
+                  onChange={(v) => {
+                    setS(prev => ({ ...prev, o2Flue: v }));
+                  }}
                 />
-                <span className="form-unit">{timeUnitMode === 'yearly' ? 't' : 'kg/h'}</span>
+                <span className="form-unit">%vol</span>
               </div>
             </div>
+            
             <div className="form-row">
-              <label>Makeup Water Temp</label>
+              <label>Calculated Excess Air</label>
+              <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text)', padding: '0.2rem 0' }}>
+                {R.excessAir.toFixed(0)} %
+              </div>
+            </div>
+
+            <div className="form-row">
+              <label>Flue Gas Dew Point</label>
+              <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text)', padding: '0.2rem 0' }}>
+                {R.tDew.toFixed(1)} °C
+              </div>
+            </div>
+
+            <div className="form-row">
+              <label>{S.ecoEnabled ? 'Raw Boiler Flue Temp' : 'Boiler Outlet Temp'}</label>
               <div className="input-with-unit">
-                <ClampedNumericInput 
-                  min={5}
-                  max={40}
-                  defaultValue={15}
-                  value={S.makeupTemp}
-                  onChange={(v) => setS(prev => ({ ...prev, makeupTemp: v }))}
+                <ClampedNumericInput
+                  step="5"
+                  min={100}
+                  max={400}
+                  defaultValue={180}
+                  value={S.flueGasTemp}
+                  onChange={(v) => {
+                    setS(prev => ({ ...prev, flueGasTemp: v }));
+                  }}
                 />
                 <span className="form-unit">°C</span>
               </div>
             </div>
-            <div className="form-row">
-              <label>Makeup Water Conductivity</label>
-              <div className="input-with-unit">
-                <ClampedNumericInput 
-                  step={10}
-                  min={10}
-                  max={5000}
-                  defaultValue={300}
-                  value={S.makeupConductivity}
-                  onChange={(v) => setS(prev => ({ ...prev, makeupConductivity: v }))}
-                />
-                <span className="form-unit">µS/cm</span>
-              </div>
-            </div>
           </>
         );
-      }
-      case 'steamFlow': {
-        const mult = timeUnitMode === 'yearly' ? 8.76 : 1.0;
-        const valueToShow = Math.round((leadingVariable === 'steam' ? S.steamFlowUsers : R.usersSteamFlow) * mult);
-        return (
-          <div className="form-row">
-            <label>{timeUnitMode === 'yearly' ? 'Yearly Steam Demand to Users' : 'Steam Demand to Users'}</label>
-            <div className="input-with-unit">
-              <ClampedNumericInput 
-                step={timeUnitMode === 'yearly' ? 500 : 50}
-                min={timeUnitMode === 'yearly' ? 876 : 100}
-                max={timeUnitMode === 'yearly' ? 87600 : 10000}
-                defaultValue={timeUnitMode === 'yearly' ? 8760 : 1000}
-                value={valueToShow}
-                onChange={(v) => {
-                  setLeadingVariable('steam');
-                  setS(prev => ({ ...prev, steamFlowUsers: v / mult }));
-                }}
-              />
-              <span className="form-unit">{timeUnitMode === 'yearly' ? 't' : 'kg/h'}</span>
-            </div>
-          </div>
-        );
-      }
-      case 'condReturnFlow': {
-        const mult = timeUnitMode === 'yearly' ? 8.76 : 1.0;
-        const valueToShow = Math.round((S.condFlowAuto ? R.condFlow : S.condReturnFlowManual) * mult);
+      case 'economizer': {
+        const ecoFlueMin = Math.round((S.ecoEnabled && S.pinchEnabled ? R.tFWEffective : R.tDaea) + 5.0);
         return (
           <>
             <div className="form-row">
-              <label>Condensate Flow Mode</label>
+              <label>Economizer Status</label>
               <div className="toggle-group">
                 <button 
-                  className={`toggle-btn ${S.condFlowAuto ? 'active' : ''}`}
-                  onClick={() => setS(prev => ({ ...prev, condFlowAuto: true, waterInputMode: 'condensate', daeaCondMode: 'auto' }))}
+                  className={`toggle-btn ${S.ecoEnabled ? 'active' : ''}`}
+                  onClick={() => setS(prev => ({ ...prev, ecoEnabled: true }))}
                 >
-                  Auto (%)
+                  Active
                 </button>
                 <button 
-                  className={`toggle-btn ${!S.condFlowAuto ? 'active' : ''}`}
-                  onClick={() => setS(prev => ({ ...prev, condFlowAuto: false, waterInputMode: 'condensate', daeaCondMode: 'auto' }))}
+                  className={`toggle-btn ${!S.ecoEnabled ? 'active' : ''}`}
+                  onClick={() => setS(prev => ({ ...prev, ecoEnabled: false, pinchEnabled: false }))}
                 >
-                  Manual ({timeUnitMode === 'yearly' ? 't' : 'kg/h'})
+                  Disabled
                 </button>
               </div>
             </div>
-            {S.condFlowAuto ? (
-              <div className="form-row">
-                <label>Condensate Return Rate</label>
-                <div className="input-with-unit">
-                  <ClampedNumericInput 
-                    min={0}
-                    max={100}
-                    defaultValue={70}
-                    value={S.condPctManual}
-                    onChange={(v) => setS(prev => ({ ...prev, condPctManual: v, waterInputMode: 'condensate', daeaCondMode: 'auto' }))}
-                  />
-                  <span className="form-unit">% steam</span>
+            {S.ecoEnabled && (
+              <>
+                <div className="form-row">
+                  <label>UA Mode</label>
+                  <div className="toggle-group">
+                    <button 
+                      className={`toggle-btn ${S.ecoUAMode === 'auto_ua' ? 'active' : ''}`}
+                      onClick={() => setS(prev => ({ ...prev, ecoUAMode: 'auto_ua' }))}
+                    >
+                      Design UA
+                    </button>
+                    <button 
+                      className={`toggle-btn ${S.ecoUAMode === 'manual_temp' ? 'active' : ''}`}
+                      onClick={() => setS(prev => ({ ...prev, ecoUAMode: 'manual_temp' }))}
+                    >
+                      Target Temp
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="form-row">
-                <label>{timeUnitMode === 'yearly' ? 'Yearly Condensate Return Flow' : 'Condensate Return Flow'}</label>
-                <div className="input-with-unit">
-                  <ClampedNumericInput 
-                    step={timeUnitMode === 'yearly' ? 500 : 50}
-                    min={0}
-                    defaultValue={timeUnitMode === 'yearly' ? 6132 : 700}
-                    value={valueToShow}
-                    onChange={(v) => setS(prev => ({ ...prev, condReturnFlowManual: v / mult, waterInputMode: 'condensate', daeaCondMode: 'auto' }))}
-                  />
-                  <span className="form-unit">{timeUnitMode === 'yearly' ? 't' : 'kg/h'}</span>
+                {S.ecoUAMode === 'auto_ua' ? (
+                  <div className="form-row">
+                    <label>Design UA</label>
+                    <div className="input-with-unit">
+                      <ClampedNumericInput 
+                        step="0.5"
+                        min={1}
+                        max={100}
+                        defaultValue={15.0}
+                        value={S.ecoUA_design}
+                        onChange={(v) => {
+                          setS(prev => ({ ...prev, ecoUA_design: v }));
+                        }}
+                      />
+                      <span className="form-unit">kW/K</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="form-row">
+                    <label>Target Flue Exit Temp</label>
+                    <div className="input-with-unit">
+                      <ClampedNumericInput 
+                        step="5"
+                        min={ecoFlueMin}
+                        max={300}
+                        defaultValue={130}
+                        value={Math.round(R.ecoFlueTempOutClamped)}
+                        onChange={(v) => {
+                          setS(prev => ({ ...prev, ecoFlueTempOutManual: v }));
+                        }}
+                      />
+                      <span className="form-unit">°C</span>
+                    </div>
+                  </div>
+                )}
+                <hr style={{ margin: '0.5rem 0', borderColor: 'rgba(255,255,255,0.08)' }} />
+                <div className="form-row">
+                  <label>Power Recovered</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {R.ecoHeat.toFixed(1)} kW
+                  </div>
                 </div>
-              </div>
+                <div className="form-row">
+                  <label>LMTD</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {R.ecoLMTD > 0 ? `${R.ecoLMTD.toFixed(1)} K` : 'N/A'}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>Calculated UA</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {R.ecoUA > 0 ? `${R.ecoUA.toFixed(3)} kW/K` : 'N/A'}
+                  </div>
+                </div>
+              </>
             )}
-            <div className="form-row">
-              <label>Condensate Return Temp</label>
-              <div className="input-with-unit">
-                <ClampedNumericInput 
-                  min={20}
-                  max={100}
-                  defaultValue={80}
-                  value={S.condReturnTemp}
-                  onChange={(v) => setS(prev => ({ ...prev, condReturnTemp: v }))}
-                />
-                <span className="form-unit">°C</span>
-              </div>
-            </div>
-            <div className="form-row">
-              <label>Condensate Return Conductivity</label>
-              <div className="input-with-unit">
-                <ClampedNumericInput 
-                  step={5}
-                  min={0}
-                  max={500}
-                  defaultValue={20}
-                  value={S.condConductivity}
-                  onChange={(v) => setS(prev => ({ ...prev, condConductivity: v }))}
-                />
-                <span className="form-unit">µS/cm</span>
-              </div>
-            </div>
           </>
         );
       }
-      case 'deaerator':
+      case 'condenser': {
+        const mult = timeUnitMode === 'yearly' ? 8.76 : 1.0;
         return (
           <>
             <div className="form-row">
-              <label>Deaerator Pressure</label>
-              <div className="input-with-unit">
-                <ClampedNumericInput 
-                  step="0.01"
-                  min={0.0}
-                  max={2.0}
-                  defaultValue={0.2}
-                  value={S.daeaPressure}
-                  onChange={(v) => setS(prev => {
-                    const satT = satTempFromP(v);
-                    const isManual = prev.daeaTempMode === 'manual';
-                    const newMode = (isManual && prev.daeaTempManual < satT) ? 'manual' : 'auto';
-                    return {
-                      ...prev,
-                      daeaPressure: v,
-                      daeaTempMode: newMode,
-                      daeaTempManual: isManual ? Math.min(satT, prev.daeaTempManual) : satT
-                    };
-                  })}
-                />
-                <span className="form-unit">bar(g)</span>
+              <label>Condensing Mode</label>
+              <div className="toggle-group">
+                <button
+                  className={`toggle-btn ${S.ecoCondensingEnabled ? 'active' : ''}`}
+                  onClick={() => setS(prev => ({ ...prev, ecoCondensingEnabled: true }))}
+                >
+                  Active
+                </button>
+                <button
+                  className={`toggle-btn ${!S.ecoCondensingEnabled ? 'active' : ''}`}
+                  onClick={() => setS(prev => ({ ...prev, ecoCondensingEnabled: false }))}
+                >
+                  Disabled
+                </button>
               </div>
             </div>
-            <div className="form-row">
-              <label>Deaerator Temperature</label>
-              <div className="input-with-unit">
-                <ClampedNumericInput 
-                  step="1"
-                  min={10}
-                  max={Math.round(satTempFromP(S.daeaPressure))}
-                  value={S.daeaTempMode === 'manual' ? S.daeaTempManual : Math.round(satTempFromP(S.daeaPressure))}
-                  onChange={(v) => setS(prev => {
-                    const satT = Math.round(satTempFromP(prev.daeaPressure));
-                    const isMax = v >= satT;
-                    return {
-                      ...prev,
-                      daeaTempMode: isMax ? 'auto' : 'manual',
-                      daeaTempManual: v
-                    };
-                  })}
-                />
-                <span className="form-unit">°C</span>
-                {S.daeaTempMode === 'auto' && (
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.5rem', fontStyle: 'italic' }}>
-                    (Sat)
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="form-row">
-              <label>Deaerator Conductivity</label>
-              <div className="input-with-unit">
-                <ClampedNumericInput 
-                  min={0}
-                  max={5000}
-                  defaultValue={20}
-                  value={S.daeaCondMode === 'manual' ? S.daeaConductivityManual : Math.round(R.fwConductivity)}
-                  onChange={(v) => setS(prev => ({ ...prev, daeaCondMode: 'manual', daeaConductivityManual: v }))}
-                />
-                <span className="form-unit">µS/cm</span>
-              </div>
-            </div>
+            {S.ecoEnabled && S.ecoCondensingEnabled && (
+              <>
+                <div className="form-row">
+                  <label>Flue Dew Point</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {R.tDew.toFixed(1)} °C
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>Water Condensed</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {fmtVal(R.mCondensateWater * mult, timeUnitMode === 'yearly' ? 1 : 0)} {timeUnitMode === 'yearly' ? 't' : 'kg/h'}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>Sensible Heat Recovered</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {fmtVal(R.qCondenserSensible * mult, timeUnitMode === 'yearly' ? 1 : 0)} {timeUnitMode === 'yearly' ? 'MWh' : 'kW'}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>Latent Heat Recovered</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {fmtVal(R.qCondenserLatent * mult, timeUnitMode === 'yearly' ? 1 : 0)} {timeUnitMode === 'yearly' ? 'MWh' : 'kW'}
+                  </div>
+                </div>
+                <div className="form-row" style={{ fontWeight: 'bold' }}>
+                  <label>Total Heat Recovered</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)', fontWeight: 'bold' }}>
+                    {fmtVal(R.qCondenser * mult, timeUnitMode === 'yearly' ? 1 : 0)} {timeUnitMode === 'yearly' ? 'MWh' : 'kW'}
+                  </div>
+                </div>
+                <hr style={{ margin: '0.5rem 0', borderColor: 'rgba(255,255,255,0.08)' }} />
+                <div className="form-row">
+                  <label style={{ fontWeight: S.condenserInputMode === 'dtmin' ? 'bold' : 'normal' }}>
+                    Pinch (deltaTmin) {S.condenserInputMode === 'dtmin' ? '★' : ''}
+                  </label>
+                  <div className="input-with-unit editable-cell">
+                    <ClampedNumericInput
+                      step="0.5"
+                      min={0.1}
+                      max={50}
+                      defaultValue={5.0}
+                      value={Number(R.condPinch.toFixed(1))}
+                      onChange={(v) => {
+                        setS(prev => ({
+                          ...prev,
+                          condenserDTmin: v,
+                          condenserInputMode: 'dtmin'
+                        }));
+                      }}
+                    />
+                    <span className="form-unit">K</span>
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label style={{ fontWeight: S.condenserInputMode === 't14' ? 'bold' : 'normal' }}>
+                    Stack Exit Temp {S.condenserInputMode === 't14' ? '★' : ''}
+                  </label>
+                  <div className="input-with-unit editable-cell">
+                    <ClampedNumericInput
+                      step="1"
+                      min={15}
+                      max={150}
+                      defaultValue={35.0}
+                      value={Number(R.ecoFlueTempOutClamped.toFixed(1))}
+                      onChange={(v) => {
+                        setS(prev => ({
+                          ...prev,
+                          condenserT14: v,
+                          condenserInputMode: 't14'
+                        }));
+                      }}
+                    />
+                    <span className="form-unit">°C</span>
+                  </div>
+                </div>
+
+                <div className="form-row" style={{ marginTop: '0.75rem', marginBottom: '0.25rem' }}>
+                  <button
+                    type="button"
+                    style={{
+                      width: '100%',
+                      fontSize: '0.75rem',
+                      padding: '0.4rem 0.8rem',
+                      backgroundColor: '#38bdf8',
+                      color: '#0f172a',
+                      fontWeight: 'bold',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.3rem'
+                    }}
+                    onClick={() => setIsHXProfileOpen(true)}
+                  >
+                    📊 Open HX Profile
+                  </button>
+                </div>
+
+                <div className="form-row">
+                  <label>LMTD</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {typeof R.condLMTD === 'number' ? `${R.condLMTD.toFixed(1)} K` : R.condLMTD}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>UA</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {typeof R.condUA === 'number' ? `${R.condUA.toFixed(3)} kW/K` : R.condUA}
+                  </div>
+                </div>
+                <div className="form-row" style={{ fontSize: '0.7rem', color: 'var(--accent-orange)' }}>
+                  <label style={{ color: 'var(--accent-orange)' }}>Binding Pinch Point</label>
+                  <div style={{ fontWeight: 'bold', fontFamily: 'var(--font-mono)', padding: '0.2rem 0', textAlign: 'left' }}>
+                    {R.condenserBindingConstraint}
+                  </div>
+                </div>
+              </>
+            )}
           </>
         );
+      }
+      case 'pinch': {
+        let pinchEffectivenessPct = 0;
+        let pinchLMTD = 0;
+        let pinchUA = 0;
+        if (S.pinchEnabled && S.ecoEnabled && R.pinchHeat > 0) {
+          const C_min_pinch = R.makeupFlow * 4.186 / 3600;
+          const Q_max_pinch = C_min_pinch * (R.tDaea - S.makeupTemp);
+          if (Q_max_pinch > 0) {
+            pinchEffectivenessPct = Math.min(100, Math.max(0, (R.pinchHeat / Q_max_pinch) * 100));
+          }
+
+          const dT1 = R.tDaea - R.tMakeupEffective;
+          const dT2 = R.tFWEffective - S.makeupTemp;
+          if (dT1 > 0 && dT2 > 0) {
+            if (Math.abs(dT1 - dT2) < 0.1) {
+              pinchLMTD = dT1;
+            } else {
+              pinchLMTD = (dT1 - dT2) / Math.log(dT1 / dT2);
+            }
+            pinchUA = pinchLMTD > 0 ? (R.pinchHeat / pinchLMTD) : 0;
+          }
+        }
+        return (
+          <>
+            <div className="form-row">
+              <label>Pinch HX Status</label>
+              <div className="toggle-group">
+                <button
+                  className={`toggle-btn ${S.pinchEnabled ? 'active' : ''}`}
+                  onClick={() => setS(prev => ({ ...prev, pinchEnabled: true }))}
+                >
+                  Active
+                </button>
+                <button
+                  className={`toggle-btn ${!S.pinchEnabled ? 'active' : ''}`}
+                  onClick={() => setS(prev => ({ ...prev, pinchEnabled: false }))}
+                >
+                  Disabled
+                </button>
+              </div>
+            </div>
+            {S.pinchEnabled && (
+              <>
+                <div className="form-row">
+                  <label>Pinch (deltaTmin)</label>
+                  <div className="input-with-unit editable-cell">
+                    <ClampedNumericInput
+                      step="0.5"
+                      min={0.1}
+                      max={50}
+                      defaultValue={10.0}
+                      value={S.pinchDTmin}
+                      onChange={(v) => {
+                        setS(prev => ({
+                          ...prev,
+                          pinchDTmin: v
+                        }));
+                      }}
+                    />
+                    <span className="form-unit">K</span>
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>Exchanged Power</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {R.pinchHeat.toFixed(1)} kW
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>Effectiveness</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {pinchEffectivenessPct.toFixed(0)}%
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>LMTD</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {pinchLMTD > 0 ? `${pinchLMTD.toFixed(1)} K` : 'N/A'}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label>Calculated UA</label>
+                  <div className="display-val" style={{ fontSize: '0.75rem', padding: '0.2rem 0', textAlign: 'left', fontFamily: 'var(--font-mono)' }}>
+                    {pinchUA > 0 ? `${pinchUA.toFixed(3)} kW/K` : 'N/A'}
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+        );
+      }
       default:
         return null;
     }
   };
+
+  const handleOpenSection = (key: string) => {
+    let targetKey: string | null = null;
+    
+    if (key === 'addEconomizer' || key === 'economizer') {
+      setS(prev => ({ ...prev, ecoEnabled: true }));
+      targetKey = 'economizer';
+    } else if (key === 'addCondenser' || key === 'condenser' || key === 'economizerFlue' || key === 'T02') {
+      setS(prev => ({ ...prev, ecoCondensingEnabled: true }));
+      targetKey = 'condenser';
+    } else if (key === 'addBDHR' || key === 'bdhr') {
+      setS(prev => ({ ...prev, bdRecoveryEnabled: true }));
+      targetKey = 'bdhr';
+    } else if (key === 'addPinchHX' || key === 'pinch' || key === 'T08') {
+      setS(prev => ({ ...prev, pinchEnabled: true }));
+      targetKey = 'pinch';
+    } else if (key === 'gasInput') {
+      targetKey = 'gasInput';
+    } else if (key === 'airTempIn' || key === 'flueGasTemp' || key === 'flueGases' || key === 'airRH' || key === 'X03') {
+      targetKey = 'flueGases';
+    } else if (key === 'settings') {
+      targetKey = 'settings';
+    }
+    
+    if (!targetKey) return;
+    
+    setIsLeftPanelOpen(true);
+    setOpenSections(prev => ({
+      ...prev,
+      [targetKey!]: true
+    }));
+    setHighlightedSection(targetKey);
+    setTimeout(() => {
+      setHighlightedSection(prev => prev === targetKey ? null : prev);
+    }, 800);
+    
+    setTimeout(() => {
+      const el = document.getElementById(`section-card-${targetKey}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 150);
+  };
+
+  const toggleSection = (id: string) => {
+    setOpenSections(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+
+  const renderSidebarSection = (id: string, title: string, icon: string) => {
+    const isOpen = !!openSections[id];
+    const isHighlighted = highlightedSection === id;
+    return (
+      <div 
+        id={`section-card-${id}`}
+        className={`sidebar-section-card ${isOpen ? 'expanded' : 'collapsed'} ${isHighlighted ? 'highlighted' : ''}`}
+        style={{
+          border: '1px solid var(--border)',
+          borderRadius: '6px',
+          overflow: 'hidden',
+          backgroundColor: isOpen ? 'rgba(255, 255, 255, 0.01)' : 'transparent',
+          transition: 'all 0.2s ease',
+          marginBottom: '0.5rem'
+        }}
+      >
+        <button 
+          onClick={() => toggleSection(id)}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.6rem 0.8rem',
+            background: isOpen ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.02)',
+            border: 'none',
+            color: 'var(--text)',
+            cursor: 'pointer',
+            textAlign: 'left',
+            fontFamily: 'inherit',
+            fontWeight: '600',
+            fontSize: '0.8rem',
+            transition: 'background-color 0.2s ease'
+          }}
+          className="section-header-btn"
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span>{icon}</span>
+            <span>{title}</span>
+          </span>
+          <span style={{ fontSize: '0.75rem', opacity: 0.6 }}>{isOpen ? '▼' : '▶'}</span>
+        </button>
+        {isOpen && (
+          <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }} className="popup-table">
+            {renderPopupContent(id)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Helper formatting functions
   const fmtVal = (val: number | undefined, dec: number = 0) => {
     if (val === undefined || isNaN(val)) return '—';
@@ -2097,15 +1988,6 @@ return {
               />
             </div>
           </div>
-        <div className="header-controls">
-          <button 
-            className="control-btn" 
-            onClick={(e) => handleOpenPopup('settings', e)}
-            title="Open Settings"
-          >
-            ⚙️ Settings
-          </button>
-        </div>
         <div className="efficiency-badges">
           <div className="eff-badge-card">
             <span className="eff-badge-label" style={{ textTransform: 'none' }}>η_Boiler {S.gasInputMode.toUpperCase()}</span>
@@ -2134,6 +2016,33 @@ return {
       </header>
       {/* Main dashboard content */}
       <div className="main-layout">
+        {/* Left Settings Sidebar Container */}
+        <div className="sidebar-container-left">
+          <aside className={`settings-sidebar-wrapper ${isLeftPanelOpen ? 'open' : 'collapsed'}`}>
+            <div className="sidebar settings-sidebar-inner">
+              <div className="sidebar-header">
+                <h3>Parameters</h3>
+              </div>
+              <div className="sidebar-content" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem' }}>
+                {renderSidebarSection('settings', 'General', '⚙️')}
+                {renderSidebarSection('gasInput', 'Gas Input', '🔥')}
+                {renderSidebarSection('bdhr', 'Blowdown Recovery', '♻️')}
+                {renderSidebarSection('flueGases', 'Flue Gas', '💨')}
+                {renderSidebarSection('economizer', 'Economizer', '🌡️')}
+                {renderSidebarSection('condenser', 'Condenser', '💧')}
+                {renderSidebarSection('pinch', 'Pinch Heat Exchanger', '🔄')}
+              </div>
+            </div>
+          </aside>
+          <button 
+            className={`sidebar-toggle-tab left-tab ${isLeftPanelOpen ? 'open' : 'collapsed'}`} 
+            onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+            title={isLeftPanelOpen ? "Collapse Parameters" : "Expand Parameters"}
+          >
+            {isLeftPanelOpen ? '◀' : '▶'}
+          </button>
+        </div>
+
         {/* Left side SVG area */}
         <section className="diagram-area">
           <div className="diagram-card">
@@ -2175,6 +2084,7 @@ return {
               energyUnit={timeUnitMode === 'yearly' ? 'MWh' : 'kW'}
               gasFlowRate={R.gasFlowRate}
               airTempIn={S.airTempIn}
+              airRH={S.airRH}
               o2Flue={S.o2Flue}
               flueGasTemp={S.flueGasTemp}
               ecoFlueTempOut={R.ecoFlueTempOut}
@@ -2184,7 +2094,7 @@ return {
               qCondenser={R.qCondenser}
               mult={timeUnitMode === 'yearly' ? 8.76 : 1.0}
               fmtDiagVal={(val: number, decimals: number = 0) => (isNaN(val) || val === undefined) ? '-' : val.toFixed(decimals)}
-              onLabelClick={(tag: string, e?: React.MouseEvent) => handleOpenPopup(tag, e)}
+              onLabelClick={(tag: string) => handleOpenSection(tag)}
               onValueChange={handleValueChange}
             />
             {/* Collapsible legend overlay */}
@@ -2204,31 +2114,23 @@ return {
                 </div>
               )}
             </div>
-            {/* Floating input popup */}
-            {popupKey && <div className="popup-backdrop" onClick={() => setPopupKey(null)} />}
-            {popupKey && popupPos && (
-              <div 
-                className="param-popup-card" 
-                style={{ left: popupPos.x, top: popupPos.y, width: popupKey === 'economizerFlue' ? '350px' : undefined }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="popup-header">
-                  <h4>{popupKey === 'economizerFlue' ? 'Flue Gases' : popupKey.replace(/([A-Z])/g, ' $1')}</h4>
-                  <button className="popup-close-btn" onClick={() => setPopupKey(null)}>×</button>
-                </div>
-                <div className="popup-body">
-                  {renderPopupContent(popupKey)}
-                </div>
-              </div>
-            )}
           </div>
         </section>
-        {/* Right side balance sheets */}
-        <aside className="sidebar">
-        <div className="sidebar-header">
-          <h3>Mass and Energy Flows</h3>
-        </div>
-        <div className="sidebar-content">
+        {/* Right side balance sheets Container */}
+        <div className="sidebar-container-right">
+          <button 
+            className={`sidebar-toggle-tab right-tab ${isRightPanelOpen ? 'open' : 'collapsed'}`} 
+            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+            title={isRightPanelOpen ? "Collapse Flows Table" : "Expand Flows Table"}
+          >
+            {isRightPanelOpen ? '▶' : '◀'}
+          </button>
+          <aside className={`results-sidebar-wrapper ${isRightPanelOpen ? 'open' : 'collapsed'}`}>
+          <div className="sidebar results-sidebar-inner">
+            <div className="sidebar-header">
+              <h3>Mass and Energy Flows</h3>
+            </div>
+            <div className="sidebar-content">
           {/* Header row */}
           <div className="balance-row three-cols" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.4rem', marginBottom: '0.4rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>
             <span className="balance-col-label" style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Item</span>
@@ -2444,7 +2346,9 @@ return {
             )}
           </div>
         </div>
+      </div>
       </aside>
+      </div>
       </div>
       {/* Footer bar */}
       <footer className="dashboard-footer">
@@ -2459,6 +2363,32 @@ return {
           All calculations are based on <span className="footer-highlight">ASME PTC 4</span> / <span className="footer-highlight">EN 12952</span>
         </span>
       </footer>
+      {isHXProfileOpen && (
+        <HXProfileModal 
+          isOpen={isHXProfileOpen}
+          onClose={() => setIsHXProfileOpen(false)}
+          profileData={R.hxProfile}
+          tDew={R.tDew}
+          condPinch={R.condPinch}
+          bindingConstraint={R.condenserBindingConstraint}
+          ecoFlueTempOutClamped={R.ecoFlueTempOutClamped}
+          condenserInputMode={S.condenserInputMode}
+          onPinchChange={(v) => {
+            setS(prev => ({
+              ...prev,
+              condenserDTmin: v,
+              condenserInputMode: 'dtmin'
+            }));
+          }}
+          onExitTempChange={(v) => {
+            setS(prev => ({
+              ...prev,
+              condenserT14: v,
+              condenserInputMode: 't14'
+            }));
+          }}
+        />
+      )}
     </div>
   );
 }

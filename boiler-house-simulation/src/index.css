@@ -281,13 +281,60 @@ html, body, #root {
 
 /* Sidebar Balance Sheet */
 .sidebar {
-  width: 340px;
   background-color: var(--surface);
-  border-left: 1px solid var(--border);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  height: 100%;
+}
+
+/* Sidebar No-Reflow Wrappers */
+.settings-sidebar-wrapper {
+  width: 350px;
+  background-color: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-x: hidden;
+  overflow-y: auto;
   flex-shrink: 0;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, opacity 0.3s ease;
+  opacity: 1;
+}
+
+.settings-sidebar-wrapper.collapsed {
+  width: 0px !important;
+  border-right: 0px solid transparent !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-sidebar-inner {
+  width: 350px;
+  display: flex;
+  flex-direction: column;
+}
+
+.results-sidebar-wrapper {
+  width: 340px;
+  background-color: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex-shrink: 0;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, opacity 0.3s ease;
+  opacity: 1;
+}
+
+.results-sidebar-wrapper.collapsed {
+  width: 0px !important;
+  border-left: 0px solid transparent !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.results-sidebar-inner {
+  width: 340px;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar-header {
@@ -834,5 +881,117 @@ html, body, #root {
 .editable-label:hover {
   filter: brightness(1.3);
   opacity: 0.95;
+}
+
+/* Sidebar toggle buttons inside header */
+.control-btn.active {
+  background-color: var(--accent-orange, #ff7c2a) !important;
+  color: #000 !important;
+  border-color: var(--accent-orange, #ff7c2a) !important;
+}
+
+.light-theme .control-btn.active {
+  background-color: #f97316 !important;
+  color: #fff !important;
+  border-color: #f97316 !important;
+}
+
+/* Accordion Card Highlight Flash Animation */
+.sidebar-section-card.highlighted {
+  border-color: var(--accent-orange, #ff7c2a) !important;
+  box-shadow: 0 0 12px rgba(255, 124, 42, 0.25);
+}
+
+.sidebar-section-card.highlighted .section-header-btn {
+  animation: flash-highlight-pulse 0.9s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes flash-highlight-pulse {
+  0% {
+    background-color: rgba(255, 124, 42, 0.4);
+    color: #fff;
+  }
+  30% {
+    background-color: rgba(255, 124, 42, 0.3);
+    color: #fff;
+  }
+  100% {
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+}
+
+/* Sidebar Containers to allow absolute tabs to overflow */
+.sidebar-container-left {
+  position: relative;
+  display: flex;
+  z-index: 10;
+}
+
+.sidebar-container-right {
+  position: relative;
+  display: flex;
+  z-index: 10;
+}
+
+/* Sidebar Toggle Tabs */
+.sidebar-toggle-tab {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 50px;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.sidebar-toggle-tab:hover {
+  background-color: rgba(255, 124, 42, 0.2) !important;
+  color: var(--accent-orange, #ff7c2a) !important;
+  border-color: var(--accent-orange, #ff7c2a) !important;
+}
+
+/* Left tab placing */
+.sidebar-toggle-tab.left-tab {
+  left: 100%;
+  border-radius: 0 6px 6px 0;
+  border-left: none;
+}
+
+.sidebar-toggle-tab.left-tab:hover {
+  box-shadow: 4px 0 10px rgba(255, 124, 42, 0.15);
+}
+
+/* Right tab placing */
+.sidebar-toggle-tab.right-tab {
+  right: 100%;
+  border-radius: 6px 0 0 6px;
+  border-right: none;
+}
+
+.sidebar-toggle-tab.right-tab:hover {
+  box-shadow: -4px 0 10px rgba(255, 124, 42, 0.15);
+}
+
+/* Specific theme overrides */
+.light-theme .sidebar-toggle-tab {
+  background-color: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #6b7280;
+}
+
+.light-theme .sidebar-toggle-tab:hover {
+  background-color: rgba(249, 115, 22, 0.1) !important;
+  color: #f97316 !important;
+  border-color: #f97316 !important;
 }
 
